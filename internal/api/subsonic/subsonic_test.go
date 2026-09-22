@@ -143,6 +143,7 @@ type harness struct {
 	dir    string
 	tracks []store.Track // as stored, in insertion order
 	pass   string
+	st     *store.Store // the same store the API reads, for arranging fixtures
 }
 
 // writeWAV lays down a real, decodable 16-bit stereo WAV so stream and the
@@ -181,6 +182,13 @@ func writeWAV(t *testing.T, path string, ms int) []byte {
 // 3 tracks. An empty password leaves the API disabled, which is a case under test.
 func newHarness(t *testing.T, password string) *harness {
 	t.Helper()
+	return newHarnessWith(t, password, nil)
+}
+
+// newHarnessWith is newHarness with a Scrobbler plugged into the API, which is
+// how the scrobble endpoint is observed without dragging in the history package.
+func newHarnessWith(t *testing.T, password string, hist Scrobbler) *harness {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "plectra.db"))
 	if err != nil {
@@ -193,7 +201,7 @@ func newHarness(t *testing.T, password string) *harness {
 		{Title: "Bright Morning", Artist: "Alpha Band", Album: "First Light", Year: 2001, TrackNo: 2, DiscNo: 1, DurationMS: 187000},
 		{Title: "Cold Evening", Artist: "Beta Choir", Album: "Second Wind", Year: 2011, TrackNo: 1, DiscNo: 1, DurationMS: 205000},
 	}
-	h := &harness{dir: dir, pass: password}
+	h := &harness{dir: dir, pass: password, st: st}
 	for i := range fixtures {
 		f := fixtures[i]
 		f.Path = filepath.Join(dir, strings.ReplaceAll(f.Title, " ", "_")+".wav")
@@ -209,7 +217,7 @@ func newHarness(t *testing.T, password string) *harness {
 		h.tracks = append(h.tracks, f)
 	}
 
-	api := New(catalog.New(st), playlist.New(st), player.New(&silentSink{}), nil, testUser, password)
+	api := New(catalog.New(st), playlist.New(st), player.New(&silentSink{}), hist, testUser, password)
 	h.h = api.Handler()
 	return h
 }

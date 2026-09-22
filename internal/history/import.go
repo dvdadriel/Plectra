@@ -22,6 +22,9 @@ type ImportResult struct {
 	Imported  int `json:"imported"`
 	Matched   int `json:"matched"`
 	Unmatched int `json:"unmatched"`
+	// Failed counts history files that could not be read or parsed. Without it
+	// a broken file is indistinguishable from a file that was never there.
+	Failed int `json:"failed"`
 }
 
 // gdprEntry covers both shapes Spotify has shipped: the current export uses
@@ -88,7 +91,9 @@ func (r *Recorder) ImportGDPR(ctx context.Context, path string) (ImportResult, e
 	for _, f := range files {
 		entries, err := readEntries(f)
 		if err != nil {
-			// One unreadable file does not cancel the rest of the import.
+			// One unreadable file does not cancel the rest of the import, but
+			// it is reported rather than silently lowering the file count.
+			res.Failed++
 			continue
 		}
 		res.Files++

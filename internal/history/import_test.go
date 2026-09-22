@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/plectra/plectra/internal/store"
 )
@@ -299,5 +300,193 @@ func TestImportSkipsTitlelessRowsAcrossAllFilesInDirectory(t *testing.T) {
 	}
 	if len(un) != 3 || !titles["One"] || !titles["Two"] || !titles["Three"] {
 		t.Fatalf("stored rows = %+v, want One, Two and Three from all three files", un)
+	}
+}
+
+// ---- the recently-played bridge ----
+
+// listens builds the shape metadata.Spotify.RecentlyPlayed hands to the bridge.
+// Timestamps are fixed: nothing here may depend on when the test runs.
+func at(min int) time.Time {
+	return time.Date(2024, 5, 1, 12, min, 0, 0, time.UTC)
+}
+
+func TestImportExternalMatchesLibraryAndKeepsStrangers(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	local := addTrack(t, st, "Portishead", "Roads")
+
+	res, err := New(st).ImportExternal(ctx, store.SourceSpotifyAPI, []ExternalPlay{
+		{PlayedAt: at(0), MSPlayed: 302000, Artist: "Portishead", Album: "Dummy",
+			Title: "Roads", SpotifyID: "1nZzLMnJvOFNPMRfnc4bWD"},
+		{PlayedAt: at(5), MSPlayed: 211000, Artist: "Boards of Canada",
+			Album: "Geogaddi", Title: "Roygbiv", SpotifyID: "4L1kDsYb0cNM2F5PsR9OBf"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows != 2 || res.Imported != 2 || res.Matched != 1 || res.Unmatched != 1 {
+		t.Fatalf("result = %+v, want rows 2, imported 2, matched 1, unmatched 1", res)
+	}
+
+	// Rows land under the API source, not the export source.
+	stats, err := st.HistoryStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.BySource[store.SourceSpotifyAPI] != 2 || stats.Total != 2 {
+		t.Fatalf("stats = %+v, want 2 rows all under %s", stats, store.SourceSpotifyAPI)
+	}
+	// PlayCount only counts completed rows, so this proves both the track_id
+	// and completed = true on the matched listen.
+	if n, err := st.PlayCount(ctx, local); err != nil || n != 1 {
+		t.Fatalf("completed plays for Roads = %d (err %v), want 1", n, err)
+	}
+	un, err := st.UnmatchedPlays(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(un) != 1 || un[0].Title != "Roygbiv" || un[0].Artist != "Boards of Canada" {
+		t.Fatalf("unmatched = %+v, want the single Roygbiv row with its raw metadata", un)
+	}
+	// The poller resumes from the newest row of this source.
+	last, err := st.LastPlayedAt(ctx, store.SourceSpotifyAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != at(5).Unix() {
+		t.Fatalf("LastPlayedAt = %d, want the newest listen %d", last, at(5).Unix())
+	}
+}
+
+// The poller asks for a window that overlaps what it already stored. The
+// overlap must add nothing, and the one genuinely new listen must land.
+func TestImportExternalOverlappingWindowAddsOnlyTheNewListen(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	rec := New(st)
+
+	first := []ExternalPlay{
+		{PlayedAt: at(0), MSPlayed: 302000, Artist: "Portishead", Title: "Roads"},
+		{PlayedAt: at(5), MSPlayed: 211000, Artist: "Boards of Canada", Title: "Roygbiv"},
+	}
+	if _, err := rec.ImportExternal(ctx, store.SourceSpotifyAPI, first); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same two listens again, plus one that happened since.
+	second := append(append([]ExternalPlay{}, first...),
+		ExternalPlay{PlayedAt: at(9), MSPlayed: 180000, Artist: "Portishead", Title: "Glory Box"})
+	res, err := rec.ImportExternal(ctx, store.SourceSpotifyAPI, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows != 3 {
+		t.Fatalf("rows read = %d, want all 3 of the window", res.Rows)
+	}
+	if res.Imported != 1 {
+		t.Fatalf("imported = %d, want only the 1 new listen", res.Imported)
+	}
+	stats, err := st.HistoryStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 3 {
+		t.Fatalf("stored total = %d after overlapping re-import, want 3", stats.Total)
+	}
+	last, err := st.LastPlayedAt(ctx, store.SourceSpotifyAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != at(9).Unix() {
+		t.Fatalf("LastPlayedAt = %d, want %d", last, at(9).Unix())
+	}
+}
+
+// ---- damaged input ----
+
+// A directory where one history file is not valid JSON. The good files still
+// import, and the result says a file was lost instead of quietly reporting a
+// smaller directory.
+func TestImportGDPRReportsUnreadableFileAndImportsTheRest(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	writeExport(t, dir, "StreamingHistory_music_0.json", `[
+      {"ts":"2024-04-01T09:00:00Z","ms_played":190000,
+       "master_metadata_track_name":"Good One",
+       "master_metadata_album_artist_name":"Band"}
+    ]`)
+	// Truncated mid-write: the shape a killed export actually leaves behind.
+	writeExport(t, dir, "StreamingHistory_music_1.json",
+		`[{"ts":"2024-04-02T09:00:00Z","ms_played":190000,"master_metadata_tr`)
+	writeExport(t, dir, "StreamingHistory_music_2.json", `[
+      {"ts":"2024-04-03T09:00:00Z","ms_played":198000,
+       "master_metadata_track_name":"Good Two",
+       "master_metadata_album_artist_name":"Band"}
+    ]`)
+
+	res, err := New(st).ImportGDPR(ctx, dir)
+	if err != nil {
+		t.Fatalf("one broken file must not fail the whole import: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("result = %+v, want failed 1 so the broken file is visible", res)
+	}
+	if res.Files != 2 || res.Rows != 2 || res.Imported != 2 {
+		t.Fatalf("result = %+v, want the 2 readable files fully imported", res)
+	}
+	un, err := st.UnmatchedPlays(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]bool{}
+	for _, u := range un {
+		titles[u.Title] = true
+	}
+	if len(un) != 2 || !titles["Good One"] || !titles["Good Two"] {
+		t.Fatalf("stored rows = %+v, want Good One and Good Two", un)
+	}
+}
+
+// A row whose timestamp cannot be read is dropped; the rest of the file still
+// imports. Neither an unknown layout nor an empty timestamp aborts anything.
+func TestImportGDPRSkipsRowsWithUnparseableTimestamps(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	writeExport(t, dir, "StreamingHistory_music_0.json", `[
+      {"ts":"not a timestamp","ms_played":190000,
+       "master_metadata_track_name":"Garbled",
+       "master_metadata_album_artist_name":"Band"},
+      {"ts":"","endTime":"","ms_played":190000,
+       "master_metadata_track_name":"No Time At All",
+       "master_metadata_album_artist_name":"Band"},
+      {"ts":"01/05/2024 20:11","ms_played":190000,
+       "master_metadata_track_name":"Wrong Layout",
+       "master_metadata_album_artist_name":"Band"},
+      {"ts":"2024-04-05T09:00:00Z","ms_played":190000,
+       "master_metadata_track_name":"Readable",
+       "master_metadata_album_artist_name":"Band"}
+    ]`)
+
+	res, err := New(st).ImportGDPR(ctx, dir)
+	if err != nil {
+		t.Fatalf("a bad timestamp must not abort the import: %v", err)
+	}
+	if res.Files != 1 || res.Failed != 0 {
+		t.Fatalf("result = %+v, want the file itself read fine", res)
+	}
+	if res.Rows != 1 || res.Imported != 1 {
+		t.Fatalf("result = %+v, want only the 1 readable row", res)
+	}
+	un, err := st.UnmatchedPlays(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(un) != 1 || un[0].Title != "Readable" {
+		t.Fatalf("stored rows = %+v, want only Readable", un)
 	}
 }
