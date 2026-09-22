@@ -24,8 +24,9 @@ type Section struct {
 	Tracks []store.Track `json:"tracks"`
 }
 
-// SimilarProvider answers "who sounds like this artist". Optional at every
-// level: with none configured, discovery still works from local signals alone.
+// SimilarProvider answers "who sounds like this artist". None ship with Plectra
+// today; discovery runs on local listening alone. The seam stays because the
+// section it feeds is the one worth having when a provider does exist.
 type SimilarProvider interface {
 	Name() string
 	// SimilarArtists returns artist names, most similar first. mbid may be

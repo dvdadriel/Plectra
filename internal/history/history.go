@@ -31,8 +31,7 @@ func completed(msPlayed, durationMS int64) bool {
 }
 
 type Recorder struct {
-	st        *store.Store
-	scrobbler Scrobbler
+	st *store.Store
 
 	// observed state of the track currently being listened to
 	cur    store.Track
@@ -41,12 +40,6 @@ type Recorder struct {
 }
 
 func New(st *store.Store) *Recorder { return &Recorder{st: st} }
-
-// WithScrobbler sends completed plays onward as well as storing them.
-func (r *Recorder) WithScrobbler(s Scrobbler) *Recorder {
-	r.scrobbler = s
-	return r
-}
 
 // Stats reports what the history holds, for the UI.
 func (r *Recorder) Stats(ctx context.Context) (store.HistoryStats, error) {
@@ -121,11 +114,6 @@ func (r *Recorder) flush(ctx context.Context) {
 	if err := r.st.AddPlay(ctx, p); err != nil {
 		log.Printf("history: %v", err) // a failed write never touches playback
 	}
-	if r.scrobbler != nil {
-		if err := r.scrobbler.Scrobble(ctx, p); err != nil {
-			log.Printf("scrobble: %v", err) // the listen is stored either way
-		}
-	}
 }
 
 // RecordPlay stores a listen reported by a third-party client. A "now playing"
@@ -149,11 +137,6 @@ func (r *Recorder) RecordPlay(ctx context.Context, trackID int64, submission boo
 	}
 	if err := r.st.AddPlay(ctx, p); err != nil {
 		return err
-	}
-	if r.scrobbler != nil {
-		if err := r.scrobbler.Scrobble(ctx, p); err != nil {
-			log.Printf("scrobble: %v", err)
-		}
 	}
 	return nil
 }

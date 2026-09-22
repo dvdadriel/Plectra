@@ -20,7 +20,6 @@ import (
 	"github.com/plectra/plectra/internal/api/native"
 	"github.com/plectra/plectra/internal/api/subsonic"
 	"github.com/plectra/plectra/internal/catalog"
-	"github.com/plectra/plectra/internal/credentials"
 	"github.com/plectra/plectra/internal/discovery"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
@@ -46,8 +45,6 @@ func main() {
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
 	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz and Spotify")
-	lbToken := flag.String("listenbrainz-token", firstEnv("LISTENBRAINZ_TOKEN", "listenbrainz-user-token", "listenbrainz_user_token"), "ListenBrainz token, to scrobble plays (optional)")
-	lastfmKey := flag.String("lastfm-key", firstEnv("LASTFM_API_KEY", "last-fm-api-key", "lastfm_api_key"), "Last.fm API key, improves recommendations (optional)")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -97,10 +94,7 @@ func main() {
 	// History listens to the player; the player does not know it exists.
 	events, unsub := pl.Subscribe()
 	defer unsub()
-	// The scrobbler is always attached: it stays silent until a token is set,
-	// and the token can be set from the UI.
-	scrobbler := history.NewListenBrainz(*lbToken)
-	recorder := history.New(st).WithScrobbler(scrobbler)
+	recorder := history.New(st)
 	historyDone := make(chan struct{})
 	go func() {
 		recorder.Watch(ctx, events)
@@ -130,24 +124,16 @@ func main() {
 	}
 
 	// Recommendations rank tracks already in the library, using plays recorded
-	// here. The similarity providers are optional: ListenBrainz needs no key,
-	// Last.fm is used only when one is supplied.
-	lastfm := discovery.NewLastFM(*lastfmKey)
-	api = api.WithDiscovery(discovery.New(st, discovery.NewListenBrainz(), lastfm))
+	// here. No external similarity provider ships today.
+	api = api.WithDiscovery(discovery.New(st))
 
-	// Credentials are editable from Settings and applied without a restart.
-	creds := credentials.New(st, lastfm, scrobbler)
-	if err := creds.Load(ctx); err != nil {
-		log.Printf("credentials: %v", err) // stored keys are a convenience, not a requirement
-	}
 	// External sources are optional and self-declaring: a provider that needs a
 	// tool the user has not installed simply does not appear.
 	sources := source.NewRegistry(source.NewYTDLP())
 	if names := sources.Names(); len(names) > 0 {
 		log.Printf("external audio sources: %v", names)
 	}
-	api = api.WithCredentials(creds).
-		WithRadio(radio.New()).
+	api = api.WithRadio(radio.New()).
 		WithSources(sources).
 		WithSpotify(spotify.New())
 

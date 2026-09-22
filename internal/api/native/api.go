@@ -23,7 +23,6 @@ type API struct {
 	history  History       // nil when history routes are not wired
 	library  Library       // nil when no scanner is wired
 	discover Discovery     // nil when recommendations are off
-	creds    Credentials   // nil when credentials cannot be edited here
 	radio    Radio         // nil when the station directory is unavailable
 	sources  Sources       // nil when no external source is configured
 	spotify  SpotifyReader // nil when public playlist reading is off
@@ -79,7 +78,6 @@ func (a *API) Handler() http.Handler {
 	a.historyRoutes(mux)
 	a.libraryRoutes(mux)
 	a.discoverRoutes(mux)
-	a.credentialRoutes(mux)
 	a.radioRoutes(mux)
 	a.sourceRoutes(mux)
 	a.spotifyRoutes(mux)
