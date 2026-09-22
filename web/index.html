@@ -77,7 +77,8 @@ let view = 'albums', state = {}, liked = new Set(), searchTimer;
 
 const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a => `
   <div class="card" data-play='{"albumID":${a.id}}'>
-    <img class="ph" loading="lazy" src="/api/cover/${a.id}" alt="" onerror="this.removeAttribute('src')">
+    <img class="ph" loading="lazy" src="/api/cover/${a.id}" alt=""
+         onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'ph'}))">
     <div class="t">${esc(a.title)}</div>
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
   </div>`).join('') + `</div>` : '<p class="empty">Nothing here yet.</p>';
