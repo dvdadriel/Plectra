@@ -45,7 +45,8 @@ func main() {
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
-	watch := flag.Bool("watch", true, "watch the library directory for changes")
+	scanOnStart := flag.Bool("scan-on-start", false, "scan the library at startup")
+	watch := flag.Bool("watch", false, "watch the library directory and import changes as they happen")
 	flag.Parse()
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -65,7 +66,11 @@ func main() {
 		report(scanner.Scan(ctx))
 		return
 	}
-	go func() { report(scanner.Scan(ctx)) }() // scanning must not delay startup
+	// Nothing touches the library unless asked: the user scans from Settings,
+	// or starts with -scan-on-start, or turns the watcher on.
+	if *scanOnStart {
+		scanner.StartScan(ctx)
+	}
 	if *watch {
 		go func() {
 			if err := scanner.Watch(ctx, nil); err != nil {
@@ -100,7 +105,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	api := native.New(catalog.New(st), playlist.New(st), pl, assets).WithHistory(recorder)
+	api := native.New(catalog.New(st), playlist.New(st), pl, assets).
+		WithHistory(recorder).
+		WithLibrary(scanner)
 
 	// Metadata is optional at every level: no network, no credentials, or a dead
 	// provider all degrade a feature and never touch playback.

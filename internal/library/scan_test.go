@@ -226,3 +226,75 @@ func TestYearFromRealTagShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestStartScanReportsStatusAndRefusesToOverlap(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.wav", "b.wav"} {
+		writeWAV(t, filepath.Join(dir, name), 200+len(name)*10)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	s := New(st, dir, "")
+	ctx := context.Background()
+
+	// The root is known before anything has been scanned.
+	if got := s.Status(); got.Root != dir || got.Running {
+		t.Fatalf("status before scanning = %+v", got)
+	}
+
+	if !s.StartScan(ctx) {
+		t.Fatal("the first scan did not start")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := s.Status(); !got.Running && got.FinishedAt != 0 {
+			if got.Scanned != 2 {
+				t.Fatalf("scanned %d files, want 2 (%+v)", got.Scanned, got)
+			}
+			// A second scan is allowed once the first has finished.
+			if !s.StartScan(ctx) {
+				t.Fatal("a scan would not start after the previous one finished")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("scan never finished: %+v", s.Status())
+}
+
+// Pressing the button twice must not start two walks over the same tree.
+func TestStartScanIsRefusedWhileOneIsRunning(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 40; i++ {
+		writeWAV(t, filepath.Join(dir, fmt.Sprintf("t%02d.wav", i)), 400)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	s := New(st, dir, "")
+	if !s.StartScan(context.Background()) {
+		t.Fatal("the first scan did not start")
+	}
+	// While that one is walking, a second request is refused rather than queued.
+	refusedWhileRunning := false
+	for i := 0; i < 200; i++ {
+		if s.Status().Running {
+			refusedWhileRunning = !s.StartScan(context.Background())
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !refusedWhileRunning {
+		t.Fatal("a second scan started while the first was still running")
+	}
+}

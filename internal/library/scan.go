@@ -28,11 +28,17 @@ type Scanner struct {
 	st     *store.Store
 	root   string
 	covers coverCache
+
+	// Scanning is started by the user now, not by a timer, so the scanner has
+	// to be able to say whether one is already running.
+	guard
 }
 
 // New builds a scanner. coverDir may be empty, which turns artwork extraction off.
 func New(st *store.Store, root, coverDir string) *Scanner {
-	return &Scanner{st: st, root: root, covers: coverCache{dir: coverDir}}
+	s := &Scanner{st: st, root: root, covers: coverCache{dir: coverDir}}
+	s.status.Root = root // reported before the first scan, so the UI can show it
+	return s
 }
 
 type Result struct {
