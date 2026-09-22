@@ -19,6 +19,7 @@
       <button data-view="albums" aria-current="true">Albums</button>
       <button data-view="discover">Discover</button>
       <button data-view="radio">Radio</button>
+      <button data-view="find">Find</button>
       <button data-view="artists">Artists</button>
       <button data-view="playlists">Playlists</button>
       <button data-view="likes">Likes</button>
@@ -208,6 +209,17 @@ async function render() {
           q ? 'Try a different name, or clear the search to see the most played stations.'
             : 'The station directory could not be reached.');
   }
+  if (view === 'find') {
+    listing = [];
+    return m.innerHTML = `
+      <h2>Search the catalogue</h2>
+      <p class="sub">Albums from MusicBrainz — no account, no limit. Tracks you own
+        play from your library; the rest are looked up in an external source.</p>
+      <input class="path" id="cat-q" placeholder="artist, album, or both">
+      <div><button class="action" id="cat-go">Search</button></div>
+      <div id="cat-result"></div>
+`;
+  }
   if (view === 'likes') {
     listing = (await get('/likes')) || [];
     return m.innerHTML = trackList(listing);
@@ -335,6 +347,24 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
+  const album = e.target.closest('[data-album]');
+  if (album) {
+    const box = $('#album-tracks');
+    box.innerHTML = busy('Reading the track listing…');
+    const tracks = (await get('/browse/album?id=' + encodeURIComponent(album.dataset.album))) || [];
+    if (!tracks.length) return box.innerHTML = '<p class="sub">No track listing published for this album.</p>';
+    box.innerHTML = '<ul>' + tracks.map(t => `
+      <li>
+        <span class="no">${t.position || ''}</span>
+        <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
+          ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
+        </button>
+        <span class="dur">${mmss(t.durationMs)}</span>
+        <span class="meta">${t.localId ? 'library' : 'external'}</span>
+      </li>`).join('') + '</ul>';
+    return;
+  }
+
   // A track from a Spotify playlist: play the local file when there is one,
   // otherwise find it externally and play the best candidate.
   const sp = e.target.closest('[data-sp]');
@@ -427,6 +457,23 @@ async function onMainClick(e) {
         <span class="dur">${mmss(c.durationMs)}</span>
         <span class="meta">${esc(c.provider)}</span>
       </li>`).join('') + '</ul>';
+    return;
+  }
+  if (e.target.id === 'cat-go') {
+    const q = $('#cat-q').value.trim();
+    if (!q) return $('#cat-result').innerHTML = '<p class="sub">Type something to search for.</p>';
+    e.target.disabled = true;
+    $('#cat-result').innerHTML = busy('Searching MusicBrainz…');
+    const albums = (await get('/browse?q=' + encodeURIComponent(q) + '&limit=20')) || [];
+    e.target.disabled = false;
+    if (!albums.length) return $('#cat-result').innerHTML = '<p class="sub">Nothing found.</p>';
+    $('#cat-result').innerHTML = '<ul>' + albums.map(a => `
+      <li>
+        <button class="grow" data-album="${esc(a.id)}">
+          ${esc(a.title)} <span class="sub">— ${esc(a.artist)}</span>
+        </button>
+        <span class="meta">${a.year || ''} ${esc(a.type || '')}</span>
+      </li>`).join('') + '</ul><div id="album-tracks"></div>';
     return;
   }
   if (e.target.id === 'save-creds') {

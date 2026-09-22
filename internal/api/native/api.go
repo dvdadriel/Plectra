@@ -25,6 +25,7 @@ type API struct {
 	discover Discovery // nil when recommendations are off
 	radio    Radio     // nil when the station directory is unavailable
 	sources  Sources   // nil when no external source is configured
+	browser  Browser   // nil when catalogue search is off
 	web      fs.FS
 }
 
@@ -79,6 +80,7 @@ func (a *API) Handler() http.Handler {
 	a.discoverRoutes(mux)
 	a.radioRoutes(mux)
 	a.sourceRoutes(mux)
+	a.browseRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

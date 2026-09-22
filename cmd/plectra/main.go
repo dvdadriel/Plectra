@@ -19,6 +19,7 @@ import (
 
 	"github.com/plectra/plectra/internal/api/native"
 	"github.com/plectra/plectra/internal/api/subsonic"
+	"github.com/plectra/plectra/internal/browse"
 	"github.com/plectra/plectra/internal/catalog"
 	"github.com/plectra/plectra/internal/discovery"
 	"github.com/plectra/plectra/internal/history"
@@ -133,7 +134,8 @@ func main() {
 		log.Printf("external audio sources: %v", names)
 	}
 	api = api.WithRadio(radio.New()).
-		WithSources(sources)
+		WithSources(sources).
+		WithBrowser(browse.New())
 
 	handler := api.Handler()
 
