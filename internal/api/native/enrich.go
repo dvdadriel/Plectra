@@ -70,13 +70,27 @@ func (a *API) enrichRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"queued": n})
 }
 
-// unconfigured reports that Spotify cannot be used, and says why.
+// unconfigured reports that Spotify cannot be used, and says why. This lands in
+// the browser as a page of its own — the Connect button is a navigation — so it
+// answers in HTML with a way back, not a bare line of text.
 func (a *API) unconfigured(w http.ResponseWriter) bool {
-	if a.spotify == nil || !a.spotify.Configured() {
-		http.Error(w, "set -spotify-id and -spotify-secret to use Spotify", 503)
-		return true
+	if a.spotify != nil && a.spotify.Configured() {
+		return false
 	}
-	return false
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`<!doctype html><meta charset="utf-8">
+<title>Spotify is not set up</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;margin:12vh auto;max-width:34rem;padding:0 1.5rem}
+h1{font-size:19px}a{color:inherit}</style>
+<h1>Spotify is not set up on this instance</h1>
+<p>Plectra needs your own Spotify application before it can ask for access.
+Create one at <a href="https://developer.spotify.com/dashboard">developer.spotify.com</a>,
+then paste the client ID and secret into <strong>Settings &rarr; Accounts</strong>.</p>
+<p>Register this exact redirect URI in that application first — Plectra also
+prints it on startup.</p>
+<p><a href="/">Back to Plectra</a></p>`))
+	return true
 }
 
 // spotifyStatus lets the UI say what is actually true rather than guessing.

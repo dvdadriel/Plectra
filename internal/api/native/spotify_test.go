@@ -79,14 +79,26 @@ func TestSpotifyStatusReportsWhatIsActuallyTrue(t *testing.T) {
 	}
 }
 
+// Connect is a navigation, so this answer is a page the user actually lands on.
+// It has to say what is missing, where to fix it, and offer a way back.
 func TestLoginWithoutCredentialsExplainsItself(t *testing.T) {
 	w := do(handlerWith(&fakeLink{}), http.MethodGet, "/api/spotify/login")
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", w.Code)
 	}
-	// The message has to name what is missing; a bare 503 sends the user hunting.
-	if body := w.Body.String(); body == "" || !contains(body, "spotify-id") {
-		t.Fatalf("body = %q, want it to name the missing flags", body)
+	if ct := w.Header().Get("Content-Type"); !contains(ct, "text/html") {
+		t.Fatalf("content-type = %q, want html: the user lands on this page", ct)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Accounts", "developer.spotify.com", `href="/"`} {
+		if !contains(body, want) {
+			t.Errorf("the page never mentions %q", want)
+		}
+	}
+	// It must not send the user back to the command line: credentials are
+	// entered in the UI now.
+	if contains(body, "-spotify-id") {
+		t.Error("the page still tells the user to pass flags")
 	}
 }
 

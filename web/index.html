@@ -269,8 +269,11 @@ function spotifyPanel(s) {
       URI Plectra prints on startup.
     </div>`;
   }
-  const connect = `<a href="/api/spotify/login"><button class="action" type="button">${
-    s.linked ? 'Reconnect account' : 'Connect account'}</button></a>`;
+  const connect = s.configured
+    ? `<a href="/api/spotify/login"><button class="action" type="button">${
+        s.linked ? 'Reconnect account' : 'Connect account'}</button></a>`
+    : `<button class="action" type="button" disabled>Connect account</button>
+       <span class="sub">Enter your Spotify client ID and secret under Accounts above first.</span>`;
 
   const warning = !s.credentialsValid ? `<div class="empty">
       <strong>Those credentials cannot be right</strong>

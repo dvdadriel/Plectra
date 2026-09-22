@@ -9,3 +9,6 @@ demo-library/
 .env
 .env.*
 !.env.example
+/plectra-demo.db
+/plectra-demo.db-wal
+/plectra-demo.db-shm
