@@ -21,6 +21,7 @@ import (
 	"github.com/plectra/plectra/internal/api/native"
 	"github.com/plectra/plectra/internal/api/subsonic"
 	"github.com/plectra/plectra/internal/catalog"
+	"github.com/plectra/plectra/internal/credentials"
 	"github.com/plectra/plectra/internal/discovery"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
@@ -98,10 +99,10 @@ func main() {
 	// History listens to the player; the player does not know it exists.
 	events, unsub := pl.Subscribe()
 	defer unsub()
-	recorder := history.New(st)
-	if *lbToken != "" {
-		recorder = recorder.WithScrobbler(history.NewListenBrainz(*lbToken))
-	}
+	// The scrobbler is always attached: it stays silent until a token is set,
+	// and the token can be set from the UI.
+	scrobbler := history.NewListenBrainz(*lbToken)
+	recorder := history.New(st).WithScrobbler(scrobbler)
 	historyDone := make(chan struct{})
 	go func() {
 		recorder.Watch(ctx, events)
@@ -119,55 +120,43 @@ func main() {
 	// Metadata is optional at every level: no network, no credentials, or a dead
 	// provider all degrade a feature and never touch playback.
 	//
-	// Linking a Spotify account is deliberately independent of -enrich: someone
-	// who does not want automatic metadata lookups may still want to import
-	// their playlists and listening history.
-	var (
-		providers []metadata.Provider
-		link      native.SpotifyLink
-		worker    *metadata.Worker
-	)
-	if *spotifyID != "" && *spotifySecret != "" {
-		// Spotify issues 32 hex characters for both. Checking the shape here
-		// turns "INVALID_CLIENT" on Spotify's own error page — which says
-		// nothing about which value is wrong — into a line in our log.
-		warnCredential("-spotify-id", *spotifyID)
-		warnCredential("-spotify-secret", *spotifySecret)
-
-		redirect := *spotifyRedirect
-		if redirect == "" {
-			redirect = defaultRedirect(*addr)
-		}
-		log.Printf("spotify: register this exact redirect uri in your app: %s", redirect)
-		sp := metadata.NewSpotify(st, *spotifyID, *spotifySecret, redirect, metadata.SystemClock)
-		providers = append(providers, sp)
-		link = sp
+	// The Spotify provider always exists: its credentials can be entered in the
+	// UI later, and a provider that appears only after a restart cannot be
+	// configured from a browser.
+	redirect := *spotifyRedirect
+	if redirect == "" {
+		redirect = defaultRedirect(*addr)
 	}
+	spotify := metadata.NewSpotify(st, *spotifyID, *spotifySecret, redirect, metadata.SystemClock)
+	log.Printf("spotify: register this exact redirect uri in your app: %s", redirect)
+
+	providers := []metadata.Provider{spotify}
 	if *enrich {
 		providers = append([]metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}, providers...)
-		worker = metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
+		worker := metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
+		api = api.WithMetadata(worker, spotify)
 		go func() {
 			if _, err := worker.Seed(ctx); err != nil {
 				log.Printf("enrich seed: %v", err)
 			}
 			worker.Run(ctx)
 		}()
-	}
-	// A nil *Worker in an interface is not a nil interface, so pass one only
-	// when there is a worker to pass.
-	if worker != nil {
-		api = api.WithMetadata(worker, link)
-	} else if link != nil {
-		api = api.WithMetadata(nil, link)
+	} else {
+		api = api.WithMetadata(nil, spotify)
 	}
 
 	// Recommendations rank tracks already in the library, using plays recorded
 	// here. The similarity providers are optional: ListenBrainz needs no key,
 	// Last.fm is used only when one is supplied.
-	api = api.WithDiscovery(discovery.New(st,
-		discovery.NewListenBrainz(),
-		lastfmProvider(*lastfmKey),
-	))
+	lastfm := discovery.NewLastFM(*lastfmKey)
+	api = api.WithDiscovery(discovery.New(st, discovery.NewListenBrainz(), lastfm))
+
+	// Credentials are editable from Settings and applied without a restart.
+	creds := credentials.New(st, spotify, lastfm, scrobbler)
+	if err := creds.Load(ctx); err != nil {
+		log.Printf("credentials: %v", err) // stored keys are a convenience, not a requirement
+	}
+	api = api.WithCredentials(creds)
 
 	handler := api.Handler()
 
@@ -254,15 +243,6 @@ func defaultRedirect(addr string) string {
 		port = p
 	}
 	return "http://127.0.0.1:" + port + "/api/spotify/callback"
-}
-
-// lastfmProvider returns a typed nil-free value: a nil *LastFM inside a
-// non-nil interface would look configured and fail on every call.
-func lastfmProvider(key string) discovery.SimilarProvider {
-	if l := discovery.NewLastFM(key); l != nil {
-		return l
-	}
-	return nil
 }
 
 // firstEnv returns the first of these environment variables that is set, so a

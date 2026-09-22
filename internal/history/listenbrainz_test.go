@@ -49,7 +49,7 @@ func completedPlay() store.Play {
 
 func TestScrobbleSubmitsListenWithTokenAndMetadata(t *testing.T) {
 	srv := newLBServer(t, http.StatusOK)
-	lb := &ListenBrainz{Token: "secret-token", BaseURL: srv.URL, Client: srv.Client()}
+	lb := &ListenBrainz{token: "secret-token", BaseURL: srv.URL, Client: srv.Client()}
 
 	if err := lb.Scrobble(context.Background(), completedPlay()); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestScrobbleSendsNothingWhenSkippedOrUnconfigured(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv := newLBServer(t, http.StatusOK)
-			lb := &ListenBrainz{Token: c.token, BaseURL: srv.URL, Client: srv.Client()}
+			lb := &ListenBrainz{token: c.token, BaseURL: srv.URL, Client: srv.Client()}
 			if err := lb.Scrobble(context.Background(), c.play); err != nil {
 				t.Fatalf("Scrobble returned %v, want nil", err)
 			}
@@ -128,7 +128,7 @@ func TestScrobbleSendsNothingWhenSkippedOrUnconfigured(t *testing.T) {
 // A rejected submission is an error the caller can log, never a panic.
 func TestScrobbleReturnsErrorOnNon200(t *testing.T) {
 	srv := newLBServer(t, http.StatusUnauthorized)
-	lb := &ListenBrainz{Token: "bad-token", BaseURL: srv.URL, Client: srv.Client()}
+	lb := &ListenBrainz{token: "bad-token", BaseURL: srv.URL, Client: srv.Client()}
 
 	err := lb.Scrobble(context.Background(), completedPlay())
 	if err == nil {

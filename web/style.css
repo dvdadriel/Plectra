@@ -537,3 +537,13 @@ footer {
 }
 
 .key svg, .icon svg { display: block; }
+
+.field { margin-bottom: 12px; max-width: 460px; }
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 5px;
+}
+.field input { margin-bottom: 0; }

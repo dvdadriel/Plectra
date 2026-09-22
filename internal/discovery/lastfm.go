@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -13,28 +14,46 @@ import (
 // MusicBrainz enrichment has not reached yet. It needs a free API key, so it is
 // absent unless the user supplies one.
 type LastFM struct {
-	APIKey  string
 	BaseURL string
 	Client  *http.Client
+
+	mu     sync.RWMutex
+	apiKey string
 }
 
+// NewLastFM always returns a provider. The key can be supplied later from the
+// UI, so the provider exists from the start and simply answers nothing until
+// there is one.
 func NewLastFM(apiKey string) *LastFM {
-	if apiKey == "" {
-		return nil // absent, not broken
-	}
 	return &LastFM{
-		APIKey:  apiKey,
+		apiKey:  apiKey,
 		BaseURL: "https://ws.audioscrobbler.com/2.0/",
 		Client:  &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
+func (l *LastFM) SetKey(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.apiKey = key
+}
+
+func (l *LastFM) Key() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.apiKey
+}
+
 func (l *LastFM) Name() string { return "lastfm" }
 
 func (l *LastFM) SimilarArtists(ctx context.Context, name, mbid string, limit int) ([]string, error) {
+	key := l.Key()
+	if key == "" {
+		return nil, nil // no key, no answer — not an error
+	}
 	q := url.Values{
 		"method":  {"artist.getsimilar"},
-		"api_key": {l.APIKey},
+		"api_key": {key},
 		"format":  {"json"},
 		"limit":   {fmt.Sprint(limit)},
 	}

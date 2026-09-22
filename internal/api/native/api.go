@@ -23,6 +23,7 @@ type API struct {
 	history  History     // nil when history routes are not wired
 	library  Library     // nil when no scanner is wired
 	discover Discovery   // nil when recommendations are off
+	creds    Credentials // nil when credentials cannot be edited here
 	spotify  SpotifyLink // nil when Spotify credentials are absent
 	web      fs.FS
 }
@@ -75,6 +76,7 @@ func (a *API) Handler() http.Handler {
 	a.historyRoutes(mux)
 	a.libraryRoutes(mux)
 	a.discoverRoutes(mux)
+	a.credentialRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

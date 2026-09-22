@@ -150,3 +150,11 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 CREATE UNIQUE INDEX IF NOT EXISTS plays_import_unique
     ON plays(source, played_at, COALESCE(raw_artist,''), COALESCE(raw_title,''))
     WHERE source <> 'plectra';
+
+-- Credentials entered in the UI. Plain text on purpose: this is a single-user
+-- database on the user's own machine, and encrypting it with a key stored
+-- beside it would be theatre.
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

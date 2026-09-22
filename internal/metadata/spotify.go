@@ -26,8 +26,10 @@ import (
 // /audio-analysis, related-artists and featured playlists to new applications,
 // so nothing here may be built on those.
 type Spotify struct {
-	ClientID     string
-	ClientSecret string
+	// Credentials are guarded by mu: they can be entered in the UI while the
+	// server is running.
+	clientID     string
+	clientSecret string
 	RedirectURL  string
 	BaseURL      string
 	AccountsURL  string
@@ -43,7 +45,7 @@ type Spotify struct {
 
 func NewSpotify(st *store.Store, clientID, clientSecret, redirectURL string, clock Clock) *Spotify {
 	return &Spotify{
-		ClientID: clientID, ClientSecret: clientSecret, RedirectURL: redirectURL,
+		clientID: clientID, clientSecret: clientSecret, RedirectURL: redirectURL,
 		BaseURL:     "https://api.spotify.com/v1",
 		AccountsURL: "https://accounts.spotify.com",
 		Client:      &http.Client{Timeout: 20 * time.Second},
@@ -55,16 +57,35 @@ func NewSpotify(st *store.Store, clientID, clientSecret, redirectURL string, clo
 
 func (s *Spotify) Name() string { return "spotify" }
 
+// SetCredentials replaces the client id and secret. Any half-finished login is
+// dropped: it was started with the old application.
+func (s *Spotify) SetCredentials(id, secret string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clientID, s.clientSecret = id, secret
+	s.pendingState = ""
+}
+
+func (s *Spotify) credentials() (string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientID, s.clientSecret
+}
+
 // Configured reports whether credentials exist at all. Without them the provider
 // is simply absent, which is a supported state.
-func (s *Spotify) Configured() bool { return s.ClientID != "" && s.ClientSecret != "" }
+func (s *Spotify) Configured() bool {
+	id, secret := s.credentials()
+	return id != "" && secret != ""
+}
 
 // CredentialsLookValid reports whether the client id and secret have the shape
 // Spotify issues: 32 hex characters each. A placeholder left in a script is the
 // most common reason a first login fails, and Spotify's own error page does not
 // say which value is at fault.
 func (s *Spotify) CredentialsLookValid() bool {
-	return looksLikeCredential(s.ClientID) && looksLikeCredential(s.ClientSecret)
+	id, secret := s.credentials()
+	return looksLikeCredential(id) && looksLikeCredential(secret)
 }
 
 func looksLikeCredential(v string) bool {
@@ -116,8 +137,9 @@ func (s *Spotify) Linked(ctx context.Context) bool {
 }
 
 func (s *Spotify) authURL(state string) string {
+	id, _ := s.credentials()
 	q := url.Values{
-		"client_id":     {s.ClientID},
+		"client_id":     {id},
 		"response_type": {"code"},
 		"redirect_uri":  {s.RedirectURL},
 		"scope":         {"playlist-read-private playlist-read-collaborative user-library-read"},
@@ -143,8 +165,9 @@ func (s *Spotify) tokenRequest(ctx context.Context, form url.Values) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	id, secret := s.credentials()
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString(
-		[]byte(s.ClientID+":"+s.ClientSecret)))
+		[]byte(id+":"+secret)))
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
