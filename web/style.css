@@ -595,3 +595,77 @@ button[disabled] { opacity: 0.6; cursor: default; }
   .skeleton { animation: none; }
   .spinner { animation-duration: 2s; }
 }
+
+/* ---- add-to-queue and the right-click menu ---- */
+
+/* The card is the play target, so its queue button sits on the sleeve and
+   only appears on hover or focus — the grid stays about the covers. */
+.card { position: relative; }
+
+.card .add {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 32px; height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px; line-height: 1;
+  display: grid; place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast), background var(--fast);
+}
+.card:hover .add,
+.card:focus-within .add,
+.card .add:focus-visible { opacity: 1; }
+.card .add:hover { background: var(--accent); color: var(--on-accent); }
+
+/* Touch has no hover, so there the button is simply always there. */
+@media (hover: none) {
+  .card .add { opacity: 1; }
+}
+
+/* display on .menu/.toast would otherwise outrank the [hidden] default. */
+.menu[hidden], .toast[hidden] { display: none; }
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--navy) 22%, transparent);
+  display: grid;
+  gap: 2px;
+}
+
+.menu button {
+  text-align: left;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.menu button:hover,
+.menu button:focus-visible { background: var(--surface-2); outline: none; }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--player-h, 0px) + 20px);
+  translate: -50% 0;
+  z-index: 60;
+  padding: 10px 16px;
+  font-size: 14px;
+  background: var(--ink);
+  color: var(--page);
+  border-radius: var(--r-pill);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--navy) 28%, transparent);
+}

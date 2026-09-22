@@ -120,6 +120,8 @@ const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a 
          data-initial="${esc((a.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">
     <div class="t">${esc(a.title)}</div>
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
+    <button class="add" data-enq='{"albumID":${a.id}}'
+            aria-label="Add ${esc(a.title)} to the queue">+</button>
   </div>`).join('') + `</div>` : emptyState('No albums yet.', 'Point <code>-music</code> at a folder of audio files and they appear here as they are scanned.');
 
 const skeletonGrid = (n = 8) => `<div class="skeleton-grid">${
@@ -151,6 +153,8 @@ const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t,
     <span class="dur">${mmss(t.durationMs)}</span>
     <button class="icon" data-like="${t.id}" aria-pressed="${liked.has(t.id)}"
             aria-label="${liked.has(t.id) ? 'Unlike' : 'Like'} ${esc(t.title)}">${liked.has(t.id) ? ICON.heartFull : ICON.heart}</button>
+    ${opts.queue ? `<button class="icon" data-dequeue="${(opts.offset || 0) + i}" aria-label="Remove ${esc(t.title)} from queue">✕</button>`
+                 : `<button class="icon" data-enq='{"trackIDs":[${t.id}]}' aria-label="Add ${esc(t.title)} to the queue">+</button>`}
     ${opts.playlist ? `<button class="icon" data-remove="${t.id}" aria-label="Remove ${esc(t.title)} from playlist">✕</button>` : ''}
   </li>`).join('') + '</ul>' : emptyState('Nothing here yet.', 'Play something and it will show up.');
 
@@ -170,7 +174,10 @@ async function render() {
     const as = (await get('/artists')) || [];
     listing = [];
     return m.innerHTML = as.length ? '<ul>' + as.map(a => `
-      <li><button class="grow" data-play='{"artistID":${a.id}}'>${esc(a.name)}</button></li>`).join('') + '</ul>'
+      <li>
+        <button class="grow" data-play='{"artistID":${a.id}}'>${esc(a.name)}</button>
+        <button class="icon" data-enq='{"artistID":${a.id}}' aria-label="Add ${esc(a.name)} to the queue">+</button>
+      </li>`).join('') + '</ul>'
       : emptyState('No artists yet.', 'They appear once the library is scanned.');
   }
   if (view === 'discover') {
@@ -236,6 +243,7 @@ async function render() {
         <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
         <span class="meta">${p.trackCount} tracks</span>
         <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">▶</button>
+        <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
         <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">✕</button>
       </li>`).join('') + '</ul>'
       : emptyState('No playlists yet.', 'Create one, or import them from Spotify in Settings.'));
@@ -329,6 +337,8 @@ async function onMainClick(e) {
         </button>
         <span class="dur">${mmss(t.durationMs)}</span>
         <span class="meta">${t.localId ? 'library' : 'external'}</span>
+        ${t.localId ? `<button class="icon" data-enq='{"trackIDs":[${t.localId}]}'
+              aria-label="Add ${esc(t.title)} to the queue">+</button>` : ''}
       </li>`).join('') + '</ul>';
     return;
   }
@@ -366,6 +376,19 @@ async function onMainClick(e) {
 
   const station = e.target.closest('[data-station]');
   if (station) return post('/radio/play', JSON.parse(station.dataset.station));
+
+  const enq = e.target.closest('[data-enq]');
+  if (enq) {
+    e.stopPropagation();
+    await post('/player/queue', JSON.parse(enq.dataset.enq));
+    return flash('Added to the queue');
+  }
+
+  const deq = e.target.closest('[data-dequeue]');
+  if (deq) {
+    await del('/player/queue/' + deq.dataset.dequeue);
+    return;
+  }
 
   const play = e.target.closest('[data-play]');
   if (play) return post('/player/play', JSON.parse(play.dataset.play));
@@ -473,6 +496,145 @@ async function onMainClick(e) {
   }
 
 }
+
+/* ---- right-click menu ---- */
+
+// One toast element, reused. Queueing is silent otherwise and the user has no
+// way to tell an "add" from a misclick.
+const toast = Object.assign(document.createElement('div'), {className: 'toast', hidden: true});
+let toastTimer;
+document.body.append(toast);
+function flash(msg) {
+  toast.textContent = msg;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.hidden = true, 1800);
+}
+
+const menu = Object.assign(document.createElement('div'), {className: 'menu', hidden: true});
+menu.setAttribute('role', 'menu');
+document.body.append(menu);
+let menuActions = [];
+
+const closeMenu = () => { menu.hidden = true; menuActions = []; };
+addEventListener('pointerdown', e => { if (!menu.contains(e.target)) closeMenu(); });
+addEventListener('scroll', closeMenu, true);
+addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
+function openMenu(x, y, actions) {
+  menuActions = actions;
+  menu.innerHTML = actions.map((a, i) =>
+    `<button role="menuitem" data-mi="${i}">${esc(a.label)}</button>`).join('');
+  menu.hidden = false;
+  // Measure after it is laid out, so a menu near the edge folds back inside.
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
+  menu.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
+  menu.firstElementChild?.focus();
+}
+
+menu.addEventListener('click', async e => {
+  const b = e.target.closest('[data-mi]');
+  if (!b) return;
+  const a = menuActions[Number(b.dataset.mi)];
+  closeMenu();
+  await a?.run();
+});
+
+// What a row offers depends on what it is. The queue holds library tracks, so
+// external results get a play entry and no queue entry rather than one that
+// would fail.
+function actionsFor(target) {
+  const host = target.closest('.card, li');
+  if (!host) return [];
+  const acts = [];
+  const pick = sel => host.matches(sel) ? host : host.querySelector(sel);
+
+  const p = pick('[data-play]');
+  if (p) {
+    const body = JSON.parse(p.dataset.play);
+    acts.push({label: 'Play', run: () => post('/player/play', body)});
+    acts.push({label: 'Add to queue', run: async () => {
+      await post('/player/queue', body);
+      flash('Added to the queue');
+    }});
+  }
+
+  const idx = pick('[data-index]');
+  if (idx) {
+    const i = Number(idx.dataset.index);
+    const inQueue = idx.dataset.list === 'queue';
+    const src = inQueue ? (state.queue || []) : listing;
+    const t = src[i];
+    if (t) {
+      acts.push({label: inQueue ? 'Play from here' : 'Play',
+        run: () => post('/player/play', {trackIDs: src.map(x => x.id), startIndex: i})});
+      if (!inQueue) acts.push({label: 'Add to queue', run: async () => {
+        await post('/player/queue', {trackIDs: [t.id]});
+        flash('Added to the queue');
+      }});
+      acts.push({label: liked.has(t.id) ? 'Unlike' : 'Like', run: async () => {
+        await (liked.has(t.id) ? del('/likes/' + t.id) : post('/likes/' + t.id));
+        render();
+      }});
+      acts.push({label: 'Add to playlist…', run: () => playlistMenu(t.id)});
+      if (inQueue) acts.push({label: 'Remove from queue', run: () => del('/player/queue/' + i)});
+      if (playlistID) acts.push({label: 'Remove from playlist', run: async () => {
+        await del(`/playlists/${playlistID}/tracks/${t.id}`);
+        listing = (await get('/playlists/' + playlistID)) || [];
+        $('#main').innerHTML = trackList(listing, {playlist: true});
+      }});
+    }
+  }
+
+  const st = pick('[data-station]');
+  if (st) acts.push({label: 'Play station', run: () => post('/radio/play', JSON.parse(st.dataset.station))});
+
+  const cd = pick('[data-candidate]');
+  if (cd) acts.push({label: 'Play from source', run: () => post('/source/play', JSON.parse(cd.dataset.candidate))});
+
+  const sp = pick('[data-sp]');
+  if (sp) {
+    const info = JSON.parse(sp.dataset.sp);
+    acts.push({label: 'Play', run: () => sp.click()});
+    if (info.localId) acts.push({label: 'Add to queue', run: async () => {
+      await post('/player/queue', {trackIDs: [info.localId]});
+      flash('Added to the queue');
+    }});
+  }
+
+  const dp = pick('[data-delpl]');
+  if (dp) acts.push({label: 'Delete playlist', run: async () => {
+    await del('/playlists/' + dp.dataset.delpl);
+    render();
+  }});
+
+  return acts;
+}
+
+// A second pass over the same menu rather than a nested one: fewer moving
+// parts, and the position is already right.
+async function playlistMenu(trackID) {
+  const ls = (await get('/playlists')) || [];
+  const r = menu.getBoundingClientRect();
+  const add = id => post(`/playlists/${id}/tracks`, {trackIDs: [trackID]}).then(() => flash('Added to the playlist'));
+  openMenu(r.left, r.top, ls.map(pl => ({label: pl.name, run: () => add(pl.id)})).concat([{
+    label: 'New playlist…',
+    run: async () => {
+      const name = prompt('Playlist name');
+      if (!name) return;
+      const pl = await (await fetch('/api/playlists', {method: 'POST', body: JSON.stringify({name})})).json();
+      add(pl.id);
+    },
+  }]));
+}
+
+$('#main').addEventListener('contextmenu', e => {
+  const acts = actionsFor(e.target);
+  if (!acts.length) return; // nothing of ours here: leave the browser's own menu alone
+  e.preventDefault();
+  openMenu(e.clientX, e.clientY, acts);
+});
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   view = b.dataset.view;
