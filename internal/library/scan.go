@@ -163,12 +163,36 @@ func (s *Scanner) scanFile(ctx context.Context, path string) error {
 	return nil
 }
 
-// quickHash identifies a file by size, mtime and its first 64KB — cheap enough to
-// run on every file, stable enough that a move or rename keeps the same identity.
-func quickHash(r io.Reader, size, mtime int64) (string, error) {
+const hashWindow = 64 * 1024
+
+// quickHash identifies a file by size, mtime and a window from each end of it:
+// cheap enough to run on every file, stable enough that a move or rename keeps
+// the same identity.
+//
+// Both ends are read because the head alone is not enough. Files of the same
+// length written in the same second with identical leading bytes — exports from
+// one session, tracks sharing a long intro, generated audio — would otherwise
+// collapse into a single track and silently swallow each other.
+func quickHash(r io.ReadSeeker, size, mtime int64) (string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "%d:%d:", size, mtime)
-	if _, err := io.CopyN(h, r, 64*1024); err != nil && err != io.EOF {
+
+	// A file small enough to read whole is read whole: two windows already cover
+	// it, and reading the middle as well costs nothing.
+	if size <= 2*hashWindow {
+		if _, err := io.Copy(h, r); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	}
+
+	if _, err := io.CopyN(h, r, hashWindow); err != nil && err != io.EOF {
+		return "", err
+	}
+	if _, err := r.Seek(-hashWindow, io.SeekEnd); err != nil {
+		return "", err
+	}
+	if _, err := io.CopyN(h, r, hashWindow); err != nil && err != io.EOF {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

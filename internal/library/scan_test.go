@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,5 +129,75 @@ func TestWatcherPicksUpNewFiles(t *testing.T) {
 	albums, err := st.Albums(ctx)
 	if err != nil || len(albums) != 1 {
 		t.Fatalf("albums = %v, err = %v", albums, err)
+	}
+}
+
+// Two different files can share a size, an mtime and their first 64KB — audio
+// exported in one session, or tracks with the same long intro. They must stay
+// two tracks.
+func TestFilesWithIdenticalHeadsStayDistinct(t *testing.T) {
+	for _, size := range []int{4 * 1024, 200 * 1024} { // below and above the hash windows
+		t.Run(fmt.Sprintf("%dKB", size/1024), func(t *testing.T) {
+			assertDistinct(t, size)
+		})
+	}
+}
+
+func assertDistinct(t *testing.T, long int) {
+	t.Helper()
+	dir := t.TempDir()
+
+	head := make([]byte, long)
+	for i := range head {
+		head[i] = byte(i % 251)
+	}
+	for i, name := range []string{"one.wav", "two.wav"} {
+		body := append([]byte(nil), head...)
+		body[len(body)-1] = byte(i) // differ only in the final byte
+		writeWAVBody(t, filepath.Join(dir, name), body)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	if _, err := New(st, dir, "").Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	albums, _ := st.Albums(ctx)
+	tracks, err := st.TracksByAlbum(ctx, albums[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 2 {
+		t.Fatalf("scanned %d tracks, want 2 — one file swallowed the other", len(tracks))
+	}
+}
+
+// writeWAVBody writes a 16-bit stereo WAV carrying exactly the given PCM bytes.
+func writeWAVBody(t *testing.T, path string, data []byte) {
+	t.Helper()
+	const rate, ch = 44100, 2
+	var b []byte
+	put32 := func(v uint32) { b = binary.LittleEndian.AppendUint32(b, v) }
+	put16 := func(v uint16) { b = binary.LittleEndian.AppendUint16(b, v) }
+	b = append(b, "RIFF"...)
+	put32(uint32(36 + len(data)))
+	b = append(b, "WAVEfmt "...)
+	put32(16)
+	put16(1)
+	put16(ch)
+	put32(rate)
+	put32(rate * ch * 2)
+	put16(ch * 2)
+	put16(16)
+	b = append(b, "data"...)
+	put32(uint32(len(data)))
+	b = append(b, data...)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
