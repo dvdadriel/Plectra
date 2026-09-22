@@ -547,3 +547,51 @@ footer {
   margin-bottom: 5px;
 }
 .field input { margin-bottom: 0; }
+
+/* ---------- loading ----------
+   Every view and every action says it is working. Content that appears without
+   warning reads as a glitch; a skeleton reads as progress. */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    color-mix(in oklab, var(--surface-2) 60%, var(--ink)) 37%,
+    var(--surface-2) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--r-sm);
+}
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+
+.skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 24px 20px; }
+.skeleton-art { width: 100%; aspect-ratio: 1; border-radius: var(--r-md); }
+.skeleton-line { height: 12px; margin-top: 10px; }
+.skeleton-line.short { width: 55%; }
+.skeleton-row { height: 42px; margin-bottom: 6px; }
+
+/* A spinner for buttons: the control stays in place and says it is busy. */
+.spinner {
+  display: inline-block;
+  width: 13px; height: 13px;
+  margin-right: 7px;
+  vertical-align: -2px;
+  border: 2px solid color-mix(in oklab, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+button[disabled] { opacity: 0.6; cursor: default; }
+
+.busy { color: var(--ink-2); font-size: 14px; display: flex; align-items: center; gap: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  .spinner { animation-duration: 2s; }
+}

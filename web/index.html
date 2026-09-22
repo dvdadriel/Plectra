@@ -121,7 +121,23 @@ const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a 
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
   </div>`).join('') + `</div>` : emptyState('No albums yet.', 'Point <code>-music</code> at a folder of audio files and they appear here as they are scanned.');
 
+const skeletonGrid = (n = 8) => `<div class="skeleton-grid">${
+  Array.from({length: n}, () => `<div><div class="skeleton skeleton-art"></div>
+    <div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div>`).join('')
+}</div>`;
+
+const skeletonRows = (n = 8) => Array.from({length: n},
+  () => '<div class="skeleton skeleton-row"></div>').join('');
+
 const busy = (what) => `<p class="busy"><span class="spinner"></span>${esc(what)}</p>`;
+
+// Every view paints a skeleton before it awaits anything, so the screen never
+// sits on stale content and never jumps from empty to full without warning.
+function showLoading(kind) {
+  const m = $('#main');
+  if (!m) return;
+  m.innerHTML = kind === 'grid' ? skeletonGrid() : skeletonRows();
+}
 
 const emptyState = (title, detail) => `<p class="empty"><strong>${title}</strong><br><span class="sub">${detail}</span></p>`;
 
@@ -140,6 +156,7 @@ const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t,
 let listing = []; // what the current view would queue when a row is clicked
 
 async function render() {
+  showLoading(view === 'albums' || view === 'search' ? 'grid' : 'rows');
   liked = new Set(((await get('/likes')) || []).map(t => t.id));
   const m = $('#main');
   playlistID = null;
@@ -404,8 +421,10 @@ async function onMainClick(e) {
 
   if (e.target.id === 'find-online') {
     const q = e.target.dataset.q || '';
-    $('#online').innerHTML = '<p class="sub">Searching…</p>';
+    e.target.disabled = true;
+    $('#online').innerHTML = busy('Searching external sources — this asks yt-dlp, so give it a moment.');
     const found = (await get('/source/find?title=' + encodeURIComponent(q))) || [];
+    e.target.disabled = false;
     if (!found.length) return $('#online').innerHTML = '<p class="sub">No results.</p>';
     $('#online').innerHTML = '<ul>' + found.map(c => `
       <li>
