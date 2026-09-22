@@ -1,6 +1,6 @@
 .claude-flow
 .claude
-docs/plectra
+docs
 /plectra
 *.db
 *.db-wal
