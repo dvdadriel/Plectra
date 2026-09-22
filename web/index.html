@@ -121,6 +121,8 @@ const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a 
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
   </div>`).join('') + `</div>` : emptyState('No albums yet.', 'Point <code>-music</code> at a folder of audio files and they appear here as they are scanned.');
 
+const busy = (what) => `<p class="busy"><span class="spinner"></span>${esc(what)}</p>`;
+
 const emptyState = (title, detail) => `<p class="empty"><strong>${title}</strong><br><span class="sub">${detail}</span></p>`;
 
 const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t, i) => `
@@ -303,10 +305,13 @@ async function settingsPanel() {
     <h2>Accounts</h2>
     ${credentialsPanel(creds)}
 
-    <h2>Spotify</h2>
-    <p class="sub">Metadata and migration only. Spotify never provides audio.</p>
-    ${spotifyPanel(spotify)}
-    <div id="impresult" class="sub"></div>`;
+    <h2>Spotify playlists</h2>
+    <p class="sub">Paste a public playlist link. No account, no login — Plectra reads
+      the same page Spotify shows to anyone. Tracks you own play from your library;
+      the rest can be played from an external source.</p>
+    <input class="path" id="sp-url" placeholder="https://open.spotify.com/playlist/…">
+    <div><button class="action" id="sp-load">Open playlist</button></div>
+    <div id="sp-result"></div>`;
 }
 
 /* ---- interaction ---- */
@@ -320,10 +325,31 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
+  // A track from a Spotify playlist: play the local file when there is one,
+  // otherwise find it externally and play the best candidate.
+  const sp = e.target.closest('[data-sp]');
+  if (sp) {
+    const info = JSON.parse(sp.dataset.sp);
+    if (info.localId) return post('/player/play', {trackIDs: [info.localId], startIndex: 0});
+
+    const row = sp.closest('li');
+    const mark = row?.querySelector('.meta');
+    if (mark) mark.innerHTML = '<span class="spinner"></span>';
+    const found = await get('/source/find?artist=' + encodeURIComponent(info.artist) +
+      '&title=' + encodeURIComponent(info.title));
+    if (!found?.length) {
+      if (mark) mark.textContent = 'not found';
+      return;
+    }
+    const resp = await post('/source/play', found[0]);
+    if (mark) mark.textContent = resp.ok ? 'playing' : 'failed';
+    return;
+  }
+
   const cand = e.target.closest('[data-candidate]');
   if (cand) {
-    const el = $('#online');
-    if (el) el.insertAdjacentHTML('afterbegin', '<p class="sub" id="resolving">Resolving stream…</p>');
+    const el = cand.closest('#online, #sp-result') || $('#online');
+    if (el) el.insertAdjacentHTML('afterbegin', `<div id="resolving">${busy('Resolving the stream…')}</div>`);
     const resp = await post('/source/play', JSON.parse(cand.dataset.candidate));
     document.querySelector('#resolving')?.remove();
     if (!resp.ok && el) el.insertAdjacentHTML('afterbegin', `<p class="sub">${esc(await resp.text())}</p>`);
@@ -391,14 +417,36 @@ async function onMainClick(e) {
       </li>`).join('') + '</ul>';
     return;
   }
+  if (e.target.id === 'sp-load') {
+    const url = $('#sp-url').value.trim();
+    if (!url) return $('#sp-result').innerHTML = '<p class="sub">Paste a playlist link first.</p>';
+    e.target.disabled = true;
+    $('#sp-result').innerHTML = busy('Reading the playlist from Spotify…');
+    const resp = await fetch('/api/spotify/playlist', {method: 'POST', body: JSON.stringify({url})});
+    e.target.disabled = false;
+    if (!resp.ok) return $('#sp-result').innerHTML = `<p class="sub">${esc(await resp.text())}</p>`;
+    const pl = await resp.json();
+    $('#sp-result').innerHTML = `
+      <h2>${esc(pl.name)}</h2>
+      <p class="sub">${pl.tracks.length} tracks · ${pl.inLibrary} already in your library${
+        pl.truncated ? ' · Spotify only hands over the first 25 without an account' : ''}</p>
+      <ul>${pl.tracks.map((t, i) => `
+        <li>
+          <span class="no">${i + 1}</span>
+          <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
+            ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
+          </button>
+          <span class="dur">${mmss(t.durationMs)}</span>
+          <span class="meta">${t.localId ? 'library' : 'external'}</span>
+        </li>`).join('')}</ul>`;
+    return;
+  }
   if (e.target.id === 'save-creds') {
     const body = {};
     const put = (field, id) => {
       const v = $(id).value.trim();
       if (v) body[field] = v;
     };
-    put('spotifyClientId', '#cred-spotify-id');
-    put('spotifyClientSecret', '#cred-spotify-secret');
     put('lastfmApiKey', '#cred-lastfm');
     put('listenbrainzToken', '#cred-lb');
     if (!Object.keys(body).length) {

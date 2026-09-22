@@ -19,13 +19,14 @@ type API struct {
 	cat      *catalog.Catalog
 	pl       *player.Player
 	lists    *playlist.Service
-	enrich   Enricher    // nil when no metadata provider is configured
-	history  History     // nil when history routes are not wired
-	library  Library     // nil when no scanner is wired
-	discover Discovery   // nil when recommendations are off
-	creds    Credentials // nil when credentials cannot be edited here
-	radio    Radio       // nil when the station directory is unavailable
-	sources  Sources     // nil when no external source is configured
+	enrich   Enricher      // nil when no metadata provider is configured
+	history  History       // nil when history routes are not wired
+	library  Library       // nil when no scanner is wired
+	discover Discovery     // nil when recommendations are off
+	creds    Credentials   // nil when credentials cannot be edited here
+	radio    Radio         // nil when the station directory is unavailable
+	sources  Sources       // nil when no external source is configured
+	spotify  SpotifyReader // nil when public playlist reading is off
 	web      fs.FS
 }
 
@@ -81,6 +82,7 @@ func (a *API) Handler() http.Handler {
 	a.credentialRoutes(mux)
 	a.radioRoutes(mux)
 	a.sourceRoutes(mux)
+	a.spotifyRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

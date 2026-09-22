@@ -130,3 +130,18 @@ func (s *Service) index(ctx context.Context) (map[string]int64, error) {
 	}
 	return idx, nil
 }
+
+// MatchTracks reports, for each artist/title pair, the local track id or zero.
+// It is what lets a view show which songs of an external playlist can be played
+// from the library and which have to come from somewhere else.
+func (s *Service) MatchTracks(ctx context.Context, pairs [][2]string) ([]int64, error) {
+	index, err := s.index(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, len(pairs))
+	for i, p := range pairs {
+		out[i] = index[match.Key(p[0], p[1])]
+	}
+	return out, nil
+}

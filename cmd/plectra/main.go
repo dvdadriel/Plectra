@@ -29,6 +29,7 @@ import (
 	"github.com/plectra/plectra/internal/playlist"
 	"github.com/plectra/plectra/internal/radio"
 	"github.com/plectra/plectra/internal/source"
+	"github.com/plectra/plectra/internal/spotify"
 	"github.com/plectra/plectra/internal/store"
 	"github.com/plectra/plectra/web"
 )
@@ -145,7 +146,10 @@ func main() {
 	if names := sources.Names(); len(names) > 0 {
 		log.Printf("external audio sources: %v", names)
 	}
-	api = api.WithCredentials(creds).WithRadio(radio.New()).WithSources(sources)
+	api = api.WithCredentials(creds).
+		WithRadio(radio.New()).
+		WithSources(sources).
+		WithSpotify(spotify.New())
 
 	handler := api.Handler()
 
