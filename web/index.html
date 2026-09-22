@@ -1,0 +1,217 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Plectra</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --muted:#666; --line:#e4e4e4; --accent:#c8442a; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#ececec; --bg:#131313; --muted:#8e8e8e; --line:#282828; --accent:#ff7a5c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.55 system-ui,-apple-system,sans-serif; color:var(--fg); background:var(--bg); padding-bottom:96px; }
+  header { display:flex; gap:14px; align-items:center; flex-wrap:wrap; padding:14px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  h1 { font-size:17px; margin:0; letter-spacing:.06em; text-transform:uppercase; }
+  nav { display:flex; gap:2px; }
+  nav button { background:none; border:none; color:var(--muted); cursor:pointer; font:inherit; padding:5px 9px; border-radius:6px; }
+  nav button[aria-current="true"] { color:var(--fg); background:color-mix(in srgb, var(--fg) 8%, transparent); }
+  #q { flex:1 1 180px; min-width:120px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; font:inherit; }
+  main { padding:16px; max-width:1000px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:20px 0 8px; }
+  h2:first-child { margin-top:0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:16px; }
+  .card { cursor:pointer; }
+  .card img, .card .ph { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:color-mix(in srgb, var(--fg) 7%, transparent); display:block; }
+  .card .t { margin-top:6px; font-weight:600; }
+  .card .s, .sub { color:var(--muted); font-size:12px; }
+  ul { list-style:none; margin:0; padding:0; }
+  li { display:flex; gap:10px; align-items:center; padding:8px 4px; border-bottom:1px solid var(--line); }
+  li .grow { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  li.playing .grow { color:var(--accent); }
+  .icon { background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; padding:2px 6px; }
+  .icon.on { color:var(--accent); }
+  footer { position:fixed; inset:auto 0 0 0; background:var(--bg); border-top:1px solid var(--line); padding:10px 16px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  footer button { font:inherit; padding:6px 11px; border:1px solid var(--line); background:none; color:var(--fg); border-radius:7px; cursor:pointer; }
+  footer button.on { border-color:var(--accent); color:var(--accent); }
+  #now { flex:1 1 180px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #bar { flex-basis:100%; height:5px; cursor:pointer; background:var(--line); border-radius:3px; overflow:hidden; }
+  #bar > div { height:100%; width:0; background:var(--accent); }
+  .time { color:var(--muted); font-variant-numeric:tabular-nums; font-size:12px; }
+  .empty { color:var(--muted); padding:24px 0; }
+</style>
+
+<header>
+  <h1>Plectra</h1>
+  <nav>
+    <button data-view="albums" aria-current="true">Albums</button>
+    <button data-view="artists">Artists</button>
+    <button data-view="playlists">Playlists</button>
+    <button data-view="likes">Likes</button>
+    <button data-view="queue">Queue</button>
+  </nav>
+  <input id="q" type="search" placeholder="Search…" autocomplete="off">
+</header>
+
+<main id="main"></main>
+
+<footer>
+  <div id="bar"><div></div></div>
+  <span class="time" id="elapsed">0:00</span>
+  <div id="now">—</div>
+  <button id="prev">⏮</button>
+  <button id="toggle">▶</button>
+  <button id="next">⏭</button>
+  <button id="shuffle" title="Shuffle">🔀</button>
+  <button id="repeat" title="Repeat">🔁</button>
+  <button id="like" title="Like">♡</button>
+  <input id="vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const get = p => fetch('/api' + p).then(r => r.ok ? r.json() : []);
+const post = (p, body) => fetch('/api' + p, {method:'POST', body: body && JSON.stringify(body)});
+const del = p => fetch('/api' + p, {method:'DELETE'});
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const mmss = ms => { const s = Math.floor((ms||0)/1000); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
+
+let view = 'albums', state = {}, liked = new Set(), searchTimer;
+
+const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a => `
+  <div class="card" data-play='{"albumID":${a.id}}'>
+    <img class="ph" loading="lazy" src="/api/cover/${a.id}" alt="" onerror="this.removeAttribute('src')">
+    <div class="t">${esc(a.title)}</div>
+    <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
+  </div>`).join('') + `</div>` : '<p class="empty">Nothing here yet.</p>';
+
+const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t, i) => `
+  <li class="${opts.queue && i === state.index ? 'playing' : ''}">
+    <span class="grow" data-play='${opts.queue ? JSON.stringify({index:i}) : JSON.stringify({trackIDs: tracks.map(x=>x.id), startIndex:i})}'>
+      ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
+    </span>
+    <span class="time">${mmss(t.durationMs)}</span>
+    <button class="icon like ${liked.has(t.id) ? 'on' : ''}" data-like="${t.id}">${liked.has(t.id) ? '♥' : '♡'}</button>
+    ${opts.playlistID ? `<button class="icon" data-remove="${t.id}">✕</button>` : ''}
+  </li>`).join('') + '</ul>' : '<p class="empty">Nothing here yet.</p>';
+
+async function render() {
+  liked = new Set((await get('/likes')).map(t => t.id));
+  const m = $('#main');
+  if (view === 'albums')  return m.innerHTML = albumGrid(await get('/albums'));
+  if (view === 'artists') {
+    const as = await get('/artists');
+    return m.innerHTML = as.length ? '<ul>' + as.map(a =>
+      `<li><span class="grow" data-play='{"artistID":${a.id}}'>${esc(a.name)}</span></li>`).join('') + '</ul>'
+      : '<p class="empty">Nothing here yet.</p>';
+  }
+  if (view === 'likes')   return m.innerHTML = trackList(await get('/likes'));
+  if (view === 'queue')   return m.innerHTML = trackList(state.queue || [], {queue:true});
+  if (view === 'playlists') {
+    const ls = await get('/playlists');
+    return m.innerHTML = `<button id="newpl">+ New playlist</button>` + (ls.length ? '<ul>' + ls.map(p =>
+      `<li><span class="grow" data-open="${p.id}">${esc(p.name)}</span>
+           <span class="sub">${p.trackCount} tracks</span>
+           <button class="icon" data-play='{"playlistID":${p.id}}'>▶</button>
+           <button class="icon" data-delpl="${p.id}">✕</button></li>`).join('') + '</ul>'
+      : '<p class="empty">No playlists yet.</p>');
+  }
+  if (view === 'search') {
+    const r = await get('/search?q=' + encodeURIComponent($('#q').value));
+    return m.innerHTML =
+      (r.albums?.length ? '<h2>Albums</h2>' + albumGrid(r.albums) : '') +
+      (r.tracks?.length ? '<h2>Tracks</h2>' + trackList(r.tracks) : '') ||
+      '<p class="empty">No matches.</p>';
+  }
+}
+
+$('#main').addEventListener('click', async e => {
+  const play = e.target.closest('[data-play]');
+  if (play) {
+    const req = JSON.parse(play.dataset.play);
+    if ('index' in req && view === 'queue') return post('/player/play', {trackIDs: state.queue.map(t=>t.id), startIndex: req.index});
+    return post('/player/play', req);
+  }
+  const like = e.target.closest('[data-like]');
+  if (like) {
+    const id = Number(like.dataset.like);
+    await (liked.has(id) ? del('/likes/' + id) : post('/likes/' + id));
+    return render();
+  }
+  const open = e.target.closest('[data-open]');
+  if (open) {
+    const id = Number(open.dataset.open);
+    const tracks = await get('/playlists/' + id);
+    $('#main').innerHTML = trackList(tracks, {playlistID: id});
+    $('#main').dataset.playlist = id;
+    return;
+  }
+  const rm = e.target.closest('[data-remove]');
+  if (rm) {
+    await del(`/playlists/${$('#main').dataset.playlist}/tracks/${rm.dataset.remove}`);
+    return $('#main').querySelector(`[data-open="${$('#main').dataset.playlist}"]`) || render();
+  }
+  const delpl = e.target.closest('[data-delpl]');
+  if (delpl) { await del('/playlists/' + delpl.dataset.delpl); return render(); }
+  if (e.target.id === 'newpl') {
+    const name = prompt('Playlist name');
+    if (name) { await post('/playlists', {name}); render(); }
+  }
+});
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  view = b.dataset.view;
+  $('#q').value = '';
+  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-current', x === b));
+  render();
+});
+
+$('#q').oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    view = $('#q').value.trim() ? 'search' : 'albums';
+    render();
+  }, 200);
+};
+
+$('#toggle').onclick = () => post(state.playing ? '/player/pause' : '/player/resume');
+$('#prev').onclick = () => post('/player/prev');
+$('#next').onclick = () => post('/player/next');
+$('#shuffle').onclick = () => post('/player/mode', {shuffle: !state.shuffle, repeat: state.repeat});
+$('#repeat').onclick = () => post('/player/mode', {shuffle: state.shuffle, repeat: {off:'all', all:'one', one:'off'}[state.repeat || 'off']});
+$('#vol').oninput = e => post('/player/volume', {level: Number(e.target.value)});
+$('#like').onclick = async () => {
+  const t = state.queue?.[state.index];
+  if (!t) return;
+  await (liked.has(t.id) ? del('/likes/' + t.id) : post('/likes/' + t.id));
+  liked.has(t.id) ? liked.delete(t.id) : liked.add(t.id);
+  paint();
+};
+$('#bar').onclick = e => {
+  const t = state.queue?.[state.index];
+  if (!t?.durationMs) return;
+  const r = $('#bar').getBoundingClientRect();
+  post('/player/seek', {positionMs: Math.round((e.clientX - r.left) / r.width * t.durationMs)});
+};
+
+function paint() {
+  const t = state.queue?.[state.index];
+  $('#now').textContent = t ? `${t.title} — ${t.artist}` : '—';
+  $('#toggle').textContent = state.playing ? '⏸' : '▶';
+  $('#elapsed').textContent = mmss(state.positionMs);
+  $('#bar').firstElementChild.style.width = t?.durationMs ? (state.positionMs / t.durationMs * 100) + '%' : '0';
+  $('#shuffle').classList.toggle('on', !!state.shuffle);
+  $('#repeat').classList.toggle('on', (state.repeat || 'off') !== 'off');
+  $('#repeat').textContent = state.repeat === 'one' ? '🔂' : '🔁';
+  $('#like').classList.toggle('on', t && liked.has(t.id));
+  $('#like').textContent = t && liked.has(t.id) ? '♥' : '♡';
+}
+
+new EventSource('/api/events').onmessage = e => {
+  const ev = JSON.parse(e.data);
+  if (ev.type === 'error') return console.warn('player:', ev.message);
+  if (!ev.state) return;
+  const prevIndex = state.index, prevLen = state.queue?.length;
+  state = ev.state;
+  paint();
+  if (view === 'queue' && (state.index !== prevIndex || state.queue?.length !== prevLen)) render();
+};
+
+render();
+</script>
