@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -31,6 +32,10 @@ import (
 )
 
 func main() {
+	// A .env beside the binary is read first, so keys need not be typed on the
+	// command line where the process list would show them.
+	loadDotEnv(".env")
+
 	home, _ := os.UserHomeDir()
 	dataDir := defaultDataDir()
 	music := flag.String("music", filepath.Join(home, "Music"), "music library directory")
@@ -40,10 +45,10 @@ func main() {
 	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz and Spotify")
 	spotifyID := flag.String("spotify-id", os.Getenv("SPOTIFY_CLIENT_ID"), "Spotify client id (optional)")
 	spotifySecret := flag.String("spotify-secret", os.Getenv("SPOTIFY_CLIENT_SECRET"), "Spotify client secret (optional)")
-	lbToken := flag.String("listenbrainz-token", os.Getenv("LISTENBRAINZ_TOKEN"), "ListenBrainz token, to scrobble plays (optional)")
+	lbToken := flag.String("listenbrainz-token", firstEnv("LISTENBRAINZ_TOKEN", "metabrainz_secret_key"), "ListenBrainz token, to scrobble plays (optional)")
 	spotifyRedirect := flag.String("spotify-redirect", "",
 		"OAuth redirect URI registered with Spotify (default http://127.0.0.1:<port>/api/spotify/callback)")
-	lastfmKey := flag.String("lastfm-key", os.Getenv("LASTFM_API_KEY"), "Last.fm API key, improves recommendations (optional)")
+	lastfmKey := flag.String("lastfm-key", firstEnv("LASTFM_API_KEY", "last-fm-api-key"), "Last.fm API key, improves recommendations (optional)")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -258,6 +263,45 @@ func lastfmProvider(key string) discovery.SimilarProvider {
 		return l
 	}
 	return nil
+}
+
+// firstEnv returns the first of these environment variables that is set, so a
+// .env written with one spelling still works.
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// loadDotEnv reads KEY=value lines into the environment without overwriting
+// anything already set. Quietly does nothing when the file is absent.
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+		os.Setenv(key, value)
+	}
 }
 
 func report(r library.Result, err error) {

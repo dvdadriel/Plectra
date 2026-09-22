@@ -6,3 +6,6 @@ docs
 *.db-wal
 *.db-shm
 demo-library/
+.env
+.env.*
+!.env.example
