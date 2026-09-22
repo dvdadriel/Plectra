@@ -25,6 +25,7 @@ type API struct {
 	discover Discovery   // nil when recommendations are off
 	creds    Credentials // nil when credentials cannot be edited here
 	radio    Radio       // nil when the station directory is unavailable
+	sources  Sources     // nil when no external source is configured
 	spotify  SpotifyLink // nil when Spotify credentials are absent
 	web      fs.FS
 }
@@ -80,6 +81,7 @@ func (a *API) Handler() http.Handler {
 	a.discoverRoutes(mux)
 	a.credentialRoutes(mux)
 	a.radioRoutes(mux)
+	a.sourceRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

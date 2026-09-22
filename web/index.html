@@ -210,12 +210,21 @@ async function render() {
       : emptyState('No playlists yet.', 'Create one, or import them from Spotify in Settings.'));
   }
   if (view === 'search') {
-    const r = await get('/search?q=' + encodeURIComponent($('#q').value));
+    const q = $('#q').value;
+    const [r, src] = await Promise.all([get('/search?q=' + encodeURIComponent(q)), get('/source')]);
     listing = r?.tracks || [];
-    return m.innerHTML =
-      ((r?.albums?.length ? '<h2>Albums</h2>' + albumGrid(r.albums) : '') +
-       (r?.tracks?.length ? '<h2>Tracks</h2>' + trackList(r.tracks) : ''))
-      || emptyState('No matches.', 'Search covers track, album and artist names.');
+    const local =
+      (r?.albums?.length ? '<h2>Albums</h2>' + albumGrid(r.albums) : '') +
+      (r?.tracks?.length ? '<h2>Tracks</h2>' + trackList(r.tracks) : '');
+    const online = src?.providers?.length
+      ? `<h2>Not in your library</h2>
+         <p class="sub">Search ${src.providers.join(', ')} for “${esc(q)}”. Nothing is downloaded;
+            the stream is resolved when you press play and thrown away afterwards.</p>
+         <button class="action" id="find-online" data-q="${esc(q)}">Search online</button>
+         <div id="online"></div>`
+      : '';
+    return m.innerHTML = (local || emptyState('Nothing in your library matches.',
+      src?.providers?.length ? 'You can still look outside it.' : 'Try another spelling.')) + online;
   }
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
@@ -362,6 +371,16 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
+  const cand = e.target.closest('[data-candidate]');
+  if (cand) {
+    const el = $('#online');
+    if (el) el.insertAdjacentHTML('afterbegin', '<p class="sub" id="resolving">Resolving stream…</p>');
+    const resp = await post('/source/play', JSON.parse(cand.dataset.candidate));
+    document.querySelector('#resolving')?.remove();
+    if (!resp.ok && el) el.insertAdjacentHTML('afterbegin', `<p class="sub">${esc(await resp.text())}</p>`);
+    return;
+  }
+
   const station = e.target.closest('[data-station]');
   if (station) return post('/radio/play', JSON.parse(station.dataset.station));
 
@@ -408,6 +427,21 @@ async function onMainClick(e) {
     return;
   }
 
+  if (e.target.id === 'find-online') {
+    const q = e.target.dataset.q || '';
+    $('#online').innerHTML = '<p class="sub">Searching…</p>';
+    const found = (await get('/source/find?title=' + encodeURIComponent(q))) || [];
+    if (!found.length) return $('#online').innerHTML = '<p class="sub">No results.</p>';
+    $('#online').innerHTML = '<ul>' + found.map(c => `
+      <li>
+        <button class="grow" data-candidate='${esc(JSON.stringify(c))}'>
+          ${esc(c.title)} <span class="sub">— ${esc(c.artist)}</span>
+        </button>
+        <span class="dur">${mmss(c.durationMs)}</span>
+        <span class="meta">${esc(c.provider)}</span>
+      </li>`).join('') + '</ul>';
+    return;
+  }
   if (e.target.id === 'save-creds') {
     const body = {};
     const put = (field, id) => {

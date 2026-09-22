@@ -29,6 +29,7 @@ import (
 	"github.com/plectra/plectra/internal/player"
 	"github.com/plectra/plectra/internal/playlist"
 	"github.com/plectra/plectra/internal/radio"
+	"github.com/plectra/plectra/internal/source"
 	"github.com/plectra/plectra/internal/store"
 	"github.com/plectra/plectra/web"
 )
@@ -157,7 +158,13 @@ func main() {
 	if err := creds.Load(ctx); err != nil {
 		log.Printf("credentials: %v", err) // stored keys are a convenience, not a requirement
 	}
-	api = api.WithCredentials(creds).WithRadio(radio.New())
+	// External sources are optional and self-declaring: a provider that needs a
+	// tool the user has not installed simply does not appear.
+	sources := source.NewRegistry(source.NewYTDLP())
+	if names := sources.Names(); len(names) > 0 {
+		log.Printf("external audio sources: %v", names)
+	}
+	api = api.WithCredentials(creds).WithRadio(radio.New()).WithSources(sources)
 
 	handler := api.Handler()
 
