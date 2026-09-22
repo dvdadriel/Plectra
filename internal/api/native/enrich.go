@@ -20,7 +20,9 @@ type Enricher interface {
 // SpotifyLink is the slice of the Spotify provider the API is allowed to use.
 type SpotifyLink interface {
 	Configured() bool
-	AuthURL(state string) string
+	Linked(ctx context.Context) bool
+	StartAuth() string
+	CheckState(state string) bool
 	Exchange(ctx context.Context, code string) error
 	ImportPlaylists(ctx context.Context) (metadata.ImportResult, error)
 	ImportLiked(ctx context.Context) (metadata.ImportResult, error)
@@ -33,6 +35,7 @@ func (a *API) enrichRoutes(mux *http.ServeMux) {
 	}
 	// Spotify routes exist even without credentials, so the UI can explain what
 	// is missing instead of showing a bare 404.
+	mux.HandleFunc("GET /api/spotify/status", a.spotifyStatus)
 	mux.HandleFunc("GET /api/spotify/login", a.spotifyLogin)
 	mux.HandleFunc("GET /api/spotify/callback", a.spotifyCallback)
 	mux.HandleFunc("POST /api/spotify/import", a.spotifyImport)
@@ -72,15 +75,23 @@ func (a *API) unconfigured(w http.ResponseWriter) bool {
 	return false
 }
 
+// spotifyStatus lets the UI say what is actually true rather than guessing.
+func (a *API) spotifyStatus(w http.ResponseWriter, r *http.Request) {
+	configured := a.spotify != nil && a.spotify.Configured()
+	linked := configured && a.spotify.Linked(r.Context())
+	writeJSON(w, map[string]bool{"configured": configured, "linked": linked})
+}
+
 func (a *API) spotifyLogin(w http.ResponseWriter, r *http.Request) {
 	if a.unconfigured(w) {
 		return
 	}
-	if !a.spotify.Configured() {
-		http.Error(w, "spotify credentials are not configured", 503)
+	url := a.spotify.StartAuth()
+	if url == "" {
+		http.Error(w, "could not start the Spotify login", 500)
 		return
 	}
-	http.Redirect(w, r, a.spotify.AuthURL("plectra"), http.StatusFound)
+	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func (a *API) spotifyCallback(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +105,11 @@ func (a *API) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", 400)
+		return
+	}
+	// The state must be the one this server issued for this login.
+	if !a.spotify.CheckState(r.URL.Query().Get("state")) {
+		http.Error(w, "this login did not start here; open Settings and try again", 400)
 		return
 	}
 	if err := a.spotify.Exchange(r.Context(), code); err != nil {

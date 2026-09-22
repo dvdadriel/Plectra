@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -239,4 +240,74 @@ func (s *stubProvider) Name() string { return "musicbrainz" }
 func (s *stubProvider) Lookup(ctx context.Context, q Query) ([]Match, error) {
 	s.calls++
 	return s.matches, s.err
+}
+
+func TestAuthStateIsRandomAndSingleUse(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sp := NewSpotify(st, "id", "secret", "http://127.0.0.1:4533/api/spotify/callback", &fakeClock{})
+
+	first := stateOf(t, sp.StartAuth())
+	if first == "" {
+		t.Fatal("no state in the authorize url")
+	}
+	second := stateOf(t, sp.StartAuth())
+	if first == second {
+		t.Fatal("the same state was issued twice; it has to be unguessable per login")
+	}
+
+	// A callback carrying someone else's state is refused.
+	if sp.CheckState(first) {
+		t.Fatal("a stale state was accepted")
+	}
+	if !sp.CheckState(second) {
+		t.Fatal("the state this server issued was rejected")
+	}
+	// And it cannot be replayed.
+	if sp.CheckState(second) {
+		t.Fatal("the same state was accepted twice")
+	}
+	if sp.CheckState("") {
+		t.Fatal("an empty state was accepted")
+	}
+}
+
+func stateOf(t *testing.T, authURL string) string {
+	t.Helper()
+	u, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query().Get("state")
+}
+
+func TestLinkedReportsWhetherAnAccountIsConnected(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	sp := NewSpotify(st, "id", "secret", "http://127.0.0.1:4533/cb", &fakeClock{})
+	if sp.Linked(ctx) {
+		t.Fatal("reported linked with no token stored")
+	}
+	// An access token with no refresh token cannot outlive the hour: not linked.
+	if err := st.SaveToken(ctx, "spotify", store.Token{AccessToken: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if sp.Linked(ctx) {
+		t.Fatal("reported linked without a refresh token")
+	}
+	if err := st.SaveToken(ctx, "spotify", store.Token{AccessToken: "a", RefreshToken: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if !sp.Linked(ctx) {
+		t.Fatal("reported not linked with a full token stored")
+	}
 }

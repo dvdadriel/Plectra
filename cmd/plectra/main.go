@@ -8,6 +8,7 @@ import (
 	"flag"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +39,8 @@ func main() {
 	spotifyID := flag.String("spotify-id", os.Getenv("SPOTIFY_CLIENT_ID"), "Spotify client id (optional)")
 	spotifySecret := flag.String("spotify-secret", os.Getenv("SPOTIFY_CLIENT_SECRET"), "Spotify client secret (optional)")
 	lbToken := flag.String("listenbrainz-token", os.Getenv("LISTENBRAINZ_TOKEN"), "ListenBrainz token, to scrobble plays (optional)")
+	spotifyRedirect := flag.String("spotify-redirect", "",
+		"OAuth redirect URI registered with Spotify (default http://127.0.0.1:<port>/api/spotify/callback)")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -100,27 +103,45 @@ func main() {
 
 	// Metadata is optional at every level: no network, no credentials, or a dead
 	// provider all degrade a feature and never touch playback.
-	if *enrich {
-		providers := []metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}
-		var link native.SpotifyLink
-		if *spotifyID != "" && *spotifySecret != "" {
-			sp := metadata.NewSpotify(st, *spotifyID, *spotifySecret,
-				"http://"+*addr+"/api/spotify/callback", metadata.SystemClock)
-			providers = append(providers, sp)
-			link = sp
-			// The recently-played bridge covers the transition period only:
-			// Spotify keeps just the last fifty plays, and this dries up once
-			// Plectra is the main player.
-			go pollRecentlyPlayed(ctx, st, sp, recorder)
+	//
+	// Linking a Spotify account is deliberately independent of -enrich: someone
+	// who does not want automatic metadata lookups may still want to import
+	// their playlists and listening history.
+	var (
+		providers []metadata.Provider
+		link      native.SpotifyLink
+		worker    *metadata.Worker
+	)
+	if *spotifyID != "" && *spotifySecret != "" {
+		redirect := *spotifyRedirect
+		if redirect == "" {
+			redirect = defaultRedirect(*addr)
 		}
-		worker := metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
-		api = api.WithMetadata(worker, link)
+		log.Printf("spotify: register this exact redirect uri in your app: %s", redirect)
+		sp := metadata.NewSpotify(st, *spotifyID, *spotifySecret, redirect, metadata.SystemClock)
+		providers = append(providers, sp)
+		link = sp
+		// The recently-played bridge covers the transition period only: Spotify
+		// keeps just the last fifty plays, and it dries up once Plectra is the
+		// main player.
+		go pollRecentlyPlayed(ctx, st, sp, recorder)
+	}
+	if *enrich {
+		providers = append([]metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}, providers...)
+		worker = metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
 		go func() {
 			if _, err := worker.Seed(ctx); err != nil {
 				log.Printf("enrich seed: %v", err)
 			}
 			worker.Run(ctx)
 		}()
+	}
+	// A nil *Worker in an interface is not a nil interface, so pass one only
+	// when there is a worker to pass.
+	if worker != nil {
+		api = api.WithMetadata(worker, link)
+	} else if link != nil {
+		api = api.WithMetadata(nil, link)
 	}
 
 	handler := api.Handler()
@@ -223,6 +244,18 @@ func pollRecentlyPlayed(ctx context.Context, st *store.Store, sp *metadata.Spoti
 		case <-tick.C:
 		}
 	}
+}
+
+// defaultRedirect derives the OAuth callback from the listen port, always on the
+// loopback literal address. Spotify refuses plain http for anything else — and
+// refuses the hostname "localhost" too — so deriving it from the bind address
+// would break the moment someone listens on 0.0.0.0 to reach the UI from a phone.
+func defaultRedirect(addr string) string {
+	port := "4533"
+	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
+		port = p
+	}
+	return "http://127.0.0.1:" + port + "/api/spotify/callback"
 }
 
 func report(r library.Result, err error) {

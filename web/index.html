@@ -182,8 +182,35 @@ async function render() {
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
 
+// The panel says what is actually true: no credentials, credentials but no
+// account, or connected.
+function spotifyPanel(s) {
+  if (!s || !s.configured) {
+    return `<div class="empty">
+      <strong>Spotify is not set up</strong>
+      Start Plectra with your own app credentials:
+      <code>-spotify-id</code> and <code>-spotify-secret</code>, or the
+      <code>SPOTIFY_CLIENT_ID</code> / <code>SPOTIFY_CLIENT_SECRET</code> environment
+      variables. Create the app at developer.spotify.com and register the redirect
+      URI Plectra prints on startup.
+    </div>`;
+  }
+  if (!s.linked) {
+    return `<div>
+      <a href="/api/spotify/login"><button class="action" type="button">Connect account</button></a>
+      <span class="sub">Opens Spotify to authorise this instance.</span>
+    </div>`;
+  }
+  return `<p class="sub"><strong>Account connected.</strong> Imports match against your local library.</p>
+    <div>
+      <button class="action" id="imp-pl">Import playlists</button>
+      <button class="action" id="imp-liked">Import liked songs</button>
+      <a href="/api/spotify/login"><button class="action" type="button">Reconnect</button></a>
+    </div>`;
+}
+
 async function settingsPanel() {
-  const [enrich, hist] = await Promise.all([get('/enrich'), get('/history')]);
+  const [enrich, hist, spotify] = await Promise.all([get('/enrich'), get('/history'), get('/spotify/status')]);
   const sources = hist ? Object.entries(hist.bySource || {}).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
   return `
     <h2>Metadata</h2>
@@ -209,11 +236,7 @@ async function settingsPanel() {
 
     <h2>Spotify</h2>
     <p class="sub">Metadata and migration only. Spotify never provides audio.</p>
-    <div>
-      <a href="/api/spotify/login"><button class="action" type="button">Connect account</button></a>
-      <button class="action" id="imp-pl">Import playlists</button>
-      <button class="action" id="imp-liked">Import liked songs</button>
-    </div>
+    ${spotifyPanel(spotify)}
     <div id="impresult" class="sub"></div>`;
 }
 
@@ -286,7 +309,8 @@ async function onMainClick(e) {
     if (!resp.ok) return $('#histresult').textContent = await resp.text();
     const r = await resp.json();
     $('#histresult').textContent =
-      `${r.imported} new plays from ${r.files} files · ${r.matched} matched, ${r.unmatched} not in your library`;
+      `${r.imported} new plays from ${r.files} files · ${r.matched} matched, ${r.unmatched} not in your library` +
+      (r.failed ? ` · ${r.failed} file${r.failed > 1 ? 's' : ''} could not be read` : '');
     return;
   }
 

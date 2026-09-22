@@ -2,7 +2,10 @@ package metadata
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +37,9 @@ type Spotify struct {
 	st  *store.Store
 	lim *limiter
 
-	mu    sync.Mutex
-	token store.Token
+	mu           sync.Mutex
+	token        store.Token
+	pendingState string
 }
 
 func NewSpotify(st *store.Store, clientID, clientSecret, redirectURL string, clock Clock) *Spotify {
@@ -59,9 +63,48 @@ func (s *Spotify) Configured() bool { return s.ClientID != "" && s.ClientSecret 
 // ErrNotAuthorized means the user has not linked their Spotify account yet.
 var ErrNotAuthorized = errors.New("spotify: not authorized")
 
-// AuthURL starts the authorization-code flow. The scopes are the minimum needed
-// to read playlists, liked songs and recent history.
-func (s *Spotify) AuthURL(state string) string {
+// StartAuth begins the authorization-code flow and returns the URL to send the
+// browser to. The returned state is remembered and must come back unchanged;
+// without that check anyone who can reach this machine could hand the callback
+// a code of their choosing.
+func (s *Spotify) StartAuth() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Without randomness the check is worthless; refuse rather than pretend.
+		return ""
+	}
+	state := hex.EncodeToString(b)
+
+	s.mu.Lock()
+	s.pendingState = state
+	s.mu.Unlock()
+
+	return s.authURL(state)
+}
+
+// CheckState reports whether a callback carries the state this server issued,
+// and consumes it so a replay of the same callback is refused.
+func (s *Spotify) CheckState(state string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := s.pendingState
+	if want == "" || subtle.ConstantTimeCompare([]byte(state), []byte(want)) != 1 {
+		// A wrong state must not consume the pending one: otherwise any stray
+		// request to the callback cancels the login the user is in the middle of.
+		return false
+	}
+	s.pendingState = "" // consumed, so the same callback cannot be replayed
+	return true
+}
+
+// Linked reports whether an account is connected — a token exists and has a
+// refresh token to keep it alive.
+func (s *Spotify) Linked(ctx context.Context) bool {
+	t, err := s.st.LoadToken(ctx, s.Name())
+	return err == nil && t.RefreshToken != ""
+}
+
+func (s *Spotify) authURL(state string) string {
 	q := url.Values{
 		"client_id":     {s.ClientID},
 		"response_type": {"code"},
