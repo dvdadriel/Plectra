@@ -45,11 +45,29 @@ func NewWorker(st *store.Store, coverDir string, clock Clock, providers ...Provi
 	}
 }
 
+// Ready is implemented by providers that can be temporarily unusable — one
+// waiting for an account to be linked, for instance. A provider without it is
+// always considered ready.
+type Ready interface {
+	Ready(ctx context.Context) bool
+}
+
+func ready(ctx context.Context, p Provider) bool {
+	if r, ok := p.(Ready); ok {
+		return r.Ready(ctx)
+	}
+	return true
+}
+
 // Seed queues every album and artist still missing an id from a provider, and
-// reports how many jobs it queued.
+// reports how many jobs it queued. A provider that is not ready is skipped:
+// queueing work for it only produces a backlog of failures.
 func (w *Worker) Seed(ctx context.Context) (int, error) {
 	n := 0
-	for name := range w.providers {
+	for name, p := range w.providers {
+		if !ready(ctx, p) {
+			continue
+		}
 		albums, err := w.st.AlbumIDsWithout(ctx, name)
 		if err != nil {
 			return n, err
@@ -125,6 +143,15 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 
 // reschedule applies exponential backoff, or the provider's own Retry-After.
 func (w *Worker) reschedule(ctx context.Context, j store.Job, cause error) {
+	// An unauthorized provider will not become authorized by waiting. Park the
+	// job now; linking the account and re-running enrichment revives it.
+	if errors.Is(cause, ErrNotAuthorized) {
+		if err := w.st.RetryJob(ctx, j.ID, w.clock.Now(), cause.Error(), 0); err != nil {
+			log.Printf("enrich: park: %v", err)
+		}
+		return
+	}
+
 	delay := time.Duration(math.Pow(2, float64(j.Attempts))) * 30 * time.Second
 	var retry *RetryableError
 	if errors.As(cause, &retry) && retry.After > 0 {

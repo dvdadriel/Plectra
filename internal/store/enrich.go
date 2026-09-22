@@ -76,7 +76,8 @@ func (s *Store) FinishJob(ctx context.Context, id int64) error {
 }
 
 // RetryJob reschedules a failed attempt. After maxAttempts the job is parked as
-// failed: a provider that never answers must not be retried forever.
+// failed: a provider that never answers must not be retried forever. A
+// maxAttempts of 0 parks it immediately, for failures that waiting cannot fix.
 func (s *Store) RetryJob(ctx context.Context, id int64, next time.Time, reason string, maxAttempts int) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE enrich_jobs SET

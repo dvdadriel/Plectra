@@ -339,3 +339,77 @@ func TestCredentialsLookValidCatchesPlaceholders(t *testing.T) {
 		}
 	}
 }
+
+type notReadyProvider struct{ stubProvider }
+
+func (n *notReadyProvider) Ready(context.Context) bool { return false }
+
+// A provider that cannot be used yet — Spotify with no account linked — must not
+// have work queued for it. Otherwise the queue fills with failures that waiting
+// will never fix.
+func TestSeedSkipsProvidersThatAreNotReady(t *testing.T) {
+	st, ctx, albumID := seedLibrary(t)
+	clock := &fakeClock{now: time.Unix(10000, 0)}
+
+	w := NewWorker(st, t.TempDir(), clock, &notReadyProvider{})
+	n, err := w.Seed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("queued %d jobs for a provider that is not ready", n)
+	}
+	if stats, _ := st.JobStats(ctx); stats.Pending != 0 {
+		t.Fatalf("stats = %+v, want an empty queue", stats)
+	}
+	_ = albumID
+}
+
+// An unauthorized provider is parked at once rather than retried with backoff:
+// no amount of waiting authorizes it.
+func TestUnauthorizedJobIsParkedNotRetried(t *testing.T) {
+	st, ctx, albumID := seedLibrary(t)
+	clock := &fakeClock{now: time.Unix(10000, 0)}
+
+	p := &stubProvider{err: ErrNotAuthorized}
+	w := NewWorker(st, t.TempDir(), clock, p)
+	if err := st.EnqueueJob(ctx, string(KindAlbum), albumID, p.Name()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := st.JobStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Failed != 1 || stats.Pending != 0 {
+		t.Fatalf("stats = %+v, want the job parked as failed after one attempt", stats)
+	}
+	// And it is not retried a day later either.
+	clock.now = clock.now.Add(24 * time.Hour)
+	if jobs, _ := st.DueJobs(ctx, clock.now, 10); len(jobs) != 0 {
+		t.Fatalf("a parked job came back: %+v", jobs)
+	}
+	if p.calls != 1 {
+		t.Fatalf("provider called %d times, want exactly one", p.calls)
+	}
+}
+
+func seedLibrary(t *testing.T) (*store.Store, context.Context, int64) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctx := context.Background()
+	if _, err := st.UpsertTrack(ctx, store.Track{
+		Title: "T", Artist: "A", Album: "Alb", DiscNo: 1, Path: "/m/t.flac", FileHash: "h",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	albums, _ := st.Albums(ctx)
+	return st, ctx, albums[0].ID
+}

@@ -165,6 +165,12 @@ func (s *Spotify) CheckState(state string) bool {
 	return true
 }
 
+// Ready reports whether enrichment can use Spotify at all: credentials present
+// and an account linked. Without both, queueing work for it is pointless.
+func (s *Spotify) Ready(ctx context.Context) bool {
+	return s.Configured() && s.Linked(ctx)
+}
+
 // Linked reports whether an account is connected — a token exists and has a
 // refresh token to keep it alive.
 func (s *Spotify) Linked(ctx context.Context) bool {
