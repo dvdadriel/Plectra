@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -113,6 +114,12 @@ func main() {
 		worker    *metadata.Worker
 	)
 	if *spotifyID != "" && *spotifySecret != "" {
+		// Spotify issues 32 hex characters for both. Checking the shape here
+		// turns "INVALID_CLIENT" on Spotify's own error page — which says
+		// nothing about which value is wrong — into a line in our log.
+		warnCredential("-spotify-id", *spotifyID)
+		warnCredential("-spotify-secret", *spotifySecret)
+
 		redirect := *spotifyRedirect
 		if redirect == "" {
 			redirect = defaultRedirect(*addr)
@@ -243,6 +250,16 @@ func pollRecentlyPlayed(ctx context.Context, st *store.Store, sp *metadata.Spoti
 			return
 		case <-tick.C:
 		}
+	}
+}
+
+// warnCredential reports a value that cannot be a Spotify credential. It warns
+// rather than refuses: the exact format is Spotify's to change, not ours.
+func warnCredential(flag, value string) {
+	if len(value) != 32 || strings.Trim(value, "0123456789abcdef") != "" {
+		log.Printf("warning: %s does not look like a Spotify credential "+
+			"(expected 32 hex characters, got %d chars) — Spotify will answer INVALID_CLIENT",
+			flag, len(value))
 	}
 }
 

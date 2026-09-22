@@ -60,6 +60,18 @@ func (s *Spotify) Name() string { return "spotify" }
 // is simply absent, which is a supported state.
 func (s *Spotify) Configured() bool { return s.ClientID != "" && s.ClientSecret != "" }
 
+// CredentialsLookValid reports whether the client id and secret have the shape
+// Spotify issues: 32 hex characters each. A placeholder left in a script is the
+// most common reason a first login fails, and Spotify's own error page does not
+// say which value is at fault.
+func (s *Spotify) CredentialsLookValid() bool {
+	return looksLikeCredential(s.ClientID) && looksLikeCredential(s.ClientSecret)
+}
+
+func looksLikeCredential(v string) bool {
+	return len(v) == 32 && strings.Trim(v, "0123456789abcdef") == ""
+}
+
 // ErrNotAuthorized means the user has not linked their Spotify account yet.
 var ErrNotAuthorized = errors.New("spotify: not authorized")
 

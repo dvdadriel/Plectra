@@ -195,6 +195,15 @@ function spotifyPanel(s) {
       URI Plectra prints on startup.
     </div>`;
   }
+  if (!s.credentialsValid) {
+    return `<div class="empty">
+      <strong>Those credentials cannot be right</strong>
+      Spotify client ids and secrets are 32 hex characters. What Plectra was
+      started with is a different shape, so Spotify will answer
+      <code>INVALID_CLIENT</code> before you ever see a consent screen.
+      Copy both values from your app at developer.spotify.com.
+    </div>`;
+  }
   if (!s.linked) {
     return `<div>
       <a href="/api/spotify/login"><button class="action" type="button">Connect account</button></a>

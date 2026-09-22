@@ -311,3 +311,31 @@ func TestLinkedReportsWhetherAnAccountIsConnected(t *testing.T) {
 		t.Fatal("reported not linked with a full token stored")
 	}
 }
+
+func TestCredentialsLookValidCatchesPlaceholders(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	real := "0123456789abcdef0123456789abcdef" // 32 hex, the shape Spotify issues
+	cases := []struct {
+		id, secret string
+		want       bool
+	}{
+		{real, real, true},
+		{"demo-client-id", "demo-secret", false}, // the placeholder that caused a failed login
+		{real, "short", false},
+		{"", "", false},
+		{real + "f", real, false},                         // too long
+		{"0123456789ABCDEF0123456789ABCDEF", real, false}, // Spotify issues lowercase
+		{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", real, false}, // right length, not hex
+	}
+	for _, c := range cases {
+		sp := NewSpotify(st, c.id, c.secret, "http://127.0.0.1:4533/cb", &fakeClock{})
+		if got := sp.CredentialsLookValid(); got != c.want {
+			t.Errorf("CredentialsLookValid(%q, %q) = %v, want %v", c.id, c.secret, got, c.want)
+		}
+	}
+}

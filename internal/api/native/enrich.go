@@ -20,6 +20,10 @@ type Enricher interface {
 // SpotifyLink is the slice of the Spotify provider the API is allowed to use.
 type SpotifyLink interface {
 	Configured() bool
+	// CredentialsLookValid reports whether the configured client id and secret
+	// have the shape Spotify issues. False means the login will fail before the
+	// user ever sees a consent screen.
+	CredentialsLookValid() bool
 	Linked(ctx context.Context) bool
 	StartAuth() string
 	CheckState(state string) bool
@@ -79,7 +83,8 @@ func (a *API) unconfigured(w http.ResponseWriter) bool {
 func (a *API) spotifyStatus(w http.ResponseWriter, r *http.Request) {
 	configured := a.spotify != nil && a.spotify.Configured()
 	linked := configured && a.spotify.Linked(r.Context())
-	writeJSON(w, map[string]bool{"configured": configured, "linked": linked})
+	valid := configured && a.spotify.CredentialsLookValid()
+	writeJSON(w, map[string]bool{"configured": configured, "linked": linked, "credentialsValid": valid})
 }
 
 func (a *API) spotifyLogin(w http.ResponseWriter, r *http.Request) {

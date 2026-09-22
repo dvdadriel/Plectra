@@ -2,6 +2,7 @@ package native
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 // without credentials or a network.
 type fakeLink struct {
 	configured bool
+	valid      bool
 	linked     bool
 	state      string
 	exchanged  string
@@ -21,6 +23,7 @@ type fakeLink struct {
 }
 
 func (f *fakeLink) Configured() bool            { return f.configured }
+func (f *fakeLink) CredentialsLookValid() bool  { return f.valid }
 func (f *fakeLink) Linked(context.Context) bool { return f.linked }
 func (f *fakeLink) StartAuth() string           { return "https://accounts.example/authorize?state=" + f.state }
 func (f *fakeLink) CheckState(s string) bool    { return s != "" && s == f.state }
@@ -47,34 +50,33 @@ func do(h http.Handler, method, target string) *httptest.ResponseRecorder {
 
 func TestSpotifyStatusReportsWhatIsActuallyTrue(t *testing.T) {
 	cases := []struct {
-		name       string
-		link       SpotifyLink
-		configured bool
-		linked     bool
+		name                      string
+		link                      SpotifyLink
+		configured, valid, linked bool
 	}{
-		{"no provider at all", nil, false, false},
-		{"credentials missing", &fakeLink{}, false, false},
-		{"configured, not linked", &fakeLink{configured: true}, true, false},
-		{"linked", &fakeLink{configured: true, linked: true}, true, true},
+		{"no provider at all", nil, false, false, false},
+		{"credentials missing", &fakeLink{}, false, false, false},
+		// A placeholder left in a start script: configured, but doomed.
+		{"credentials malformed", &fakeLink{configured: true}, true, false, false},
+		{"configured, not linked", &fakeLink{configured: true, valid: true}, true, true, false},
+		{"linked", &fakeLink{configured: true, valid: true, linked: true}, true, true, true},
 	}
 	for _, c := range cases {
 		w := do(handlerWith(c.link), http.MethodGet, "/api/spotify/status")
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s: status = %d", c.name, w.Code)
 		}
-		body := w.Body.String()
-		want := `{"configured":` + boolText(c.configured) + `,"linked":` + boolText(c.linked) + "}\n"
-		if body != want {
-			t.Errorf("%s: body = %q, want %q", c.name, body, want)
+		var got map[string]bool
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		want := map[string]bool{"configured": c.configured, "credentialsValid": c.valid, "linked": c.linked}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s: %s = %v, want %v", c.name, k, got[k], v)
+			}
 		}
 	}
-}
-
-func boolText(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 func TestLoginWithoutCredentialsExplainsItself(t *testing.T) {
@@ -89,7 +91,7 @@ func TestLoginWithoutCredentialsExplainsItself(t *testing.T) {
 }
 
 func TestLoginRedirectsToTheProviderURL(t *testing.T) {
-	link := &fakeLink{configured: true, state: "abc123"}
+	link := &fakeLink{configured: true, valid: true, state: "abc123"}
 	w := do(handlerWith(link), http.MethodGet, "/api/spotify/login")
 	if w.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", w.Code)
@@ -106,7 +108,7 @@ func TestLoginRedirectsToTheProviderURL(t *testing.T) {
 // The state check is what stops a stray callback from handing this server a
 // code it never asked for.
 func TestCallbackRejectsAForgedState(t *testing.T) {
-	link := &fakeLink{configured: true, state: "real-state"}
+	link := &fakeLink{configured: true, valid: true, state: "real-state"}
 	h := handlerWith(link)
 
 	w := do(h, http.MethodGet, "/api/spotify/callback?code=xyz&state=forged")
@@ -124,7 +126,7 @@ func TestCallbackRejectsAForgedState(t *testing.T) {
 }
 
 func TestCallbackExchangesTheCodeAndReturnsHome(t *testing.T) {
-	link := &fakeLink{configured: true, state: "real-state"}
+	link := &fakeLink{configured: true, valid: true, state: "real-state"}
 	w := do(handlerWith(link), http.MethodGet, "/api/spotify/callback?code=xyz&state=real-state")
 	if w.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", w.Code)
@@ -138,7 +140,7 @@ func TestCallbackExchangesTheCodeAndReturnsHome(t *testing.T) {
 }
 
 func TestCallbackReportsSpotifysOwnRefusal(t *testing.T) {
-	link := &fakeLink{configured: true, state: "s"}
+	link := &fakeLink{configured: true, valid: true, state: "s"}
 	w := do(handlerWith(link), http.MethodGet, "/api/spotify/callback?error=access_denied&state=s")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
