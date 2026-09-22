@@ -72,6 +72,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/player/volume", a.volume)
 	mux.HandleFunc("POST /api/player/mode", a.mode)
 	mux.HandleFunc("GET /api/player/queue", a.queue)
+	mux.HandleFunc("POST /api/player/queue", a.enqueue)
+	mux.HandleFunc("DELETE /api/player/queue/{index}", a.dequeue)
 	mux.HandleFunc("GET /api/events", a.events)
 
 	a.enrichRoutes(mux)
@@ -360,35 +362,73 @@ type playReq struct {
 
 func decode(r *http.Request, v any) error { return json.NewDecoder(r.Body).Decode(v) }
 
-func (a *API) play(w http.ResponseWriter, r *http.Request) {
+// tracksFor turns a playReq into the tracks it names, whatever shape it came
+// in as. Play and enqueue take the same body, so they read it the same way.
+func (a *API) tracksFor(r *http.Request, req playReq) ([]store.Track, error) {
+	switch {
+	case req.AlbumID > 0:
+		return a.cat.AlbumTracks(r.Context(), req.AlbumID)
+	case req.ArtistID > 0:
+		return a.cat.ArtistTracks(r.Context(), req.ArtistID)
+	case req.PlaylistID > 0:
+		return a.lists.Tracks(r.Context(), req.PlaylistID)
+	default:
+		return a.cat.Tracks(r.Context(), req.TrackIDs)
+	}
+}
+
+// readTracks decodes and resolves in one step, reporting to the client itself.
+// It returns ok=false once anything has been written to w.
+func (a *API) readTracks(w http.ResponseWriter, r *http.Request) (playReq, []store.Track, bool) {
 	var req playReq
 	if err := decode(r, &req); err != nil {
 		http.Error(w, "bad body", 400)
-		return
+		return req, nil, false
 	}
-	var (
-		tracks []store.Track
-		err    error
-	)
-	switch {
-	case req.AlbumID > 0:
-		tracks, err = a.cat.AlbumTracks(r.Context(), req.AlbumID)
-	case req.ArtistID > 0:
-		tracks, err = a.cat.ArtistTracks(r.Context(), req.ArtistID)
-	case req.PlaylistID > 0:
-		tracks, err = a.lists.Tracks(r.Context(), req.PlaylistID)
-	default:
-		tracks, err = a.cat.Tracks(r.Context(), req.TrackIDs)
-	}
+	tracks, err := a.tracksFor(r, req)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
-		return
+		return req, nil, false
 	}
 	if len(tracks) == 0 {
 		http.Error(w, "nothing to play", 400)
+		return req, nil, false
+	}
+	return req, tracks, true
+}
+
+func (a *API) play(w http.ResponseWriter, r *http.Request) {
+	req, tracks, ok := a.readTracks(w, r)
+	if !ok {
 		return
 	}
 	a.pl.Play(tracks, req.StartIndex)
+	writeJSON(w, a.pl.State())
+}
+
+// enqueue appends to the queue instead of replacing it. An empty queue means
+// nothing is playing, so the first append starts playback rather than sitting
+// silent and making the user press play.
+func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
+	_, tracks, ok := a.readTracks(w, r)
+	if !ok {
+		return
+	}
+	if len(a.pl.State().Queue) == 0 {
+		a.pl.Play(tracks, 0)
+	} else {
+		a.pl.Enqueue(tracks)
+	}
+	writeJSON(w, a.pl.State())
+}
+
+func (a *API) dequeue(w http.ResponseWriter, r *http.Request) {
+	i, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil {
+		http.Error(w, "bad index", 400)
+		return
+	}
+	a.pl.Remove(i)
 	writeJSON(w, a.pl.State())
 }
 
