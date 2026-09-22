@@ -24,6 +24,7 @@ type API struct {
 	library  Library     // nil when no scanner is wired
 	discover Discovery   // nil when recommendations are off
 	creds    Credentials // nil when credentials cannot be edited here
+	radio    Radio       // nil when the station directory is unavailable
 	spotify  SpotifyLink // nil when Spotify credentials are absent
 	web      fs.FS
 }
@@ -77,6 +78,7 @@ func (a *API) Handler() http.Handler {
 	a.libraryRoutes(mux)
 	a.discoverRoutes(mux)
 	a.credentialRoutes(mux)
+	a.radioRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

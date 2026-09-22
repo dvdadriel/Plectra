@@ -18,6 +18,7 @@
     <nav aria-label="Library">
       <button data-view="albums" aria-current="true">Albums</button>
       <button data-view="discover">Discover</button>
+      <button data-view="radio">Radio</button>
       <button data-view="artists">Artists</button>
       <button data-view="playlists">Playlists</button>
       <button data-view="likes">Likes</button>
@@ -167,6 +168,26 @@ async function render() {
       offset += sec.tracks.length;
       return html;
     }).join('');
+  }
+  if (view === 'radio') {
+    listing = [];
+    const q = $('#q').value.trim();
+    const stations = (await get('/radio?limit=40' + (q ? '&q=' + encodeURIComponent(q) : ''))) || [];
+    return m.innerHTML = stations.length ? `
+      <h2>${q ? 'Stations matching ' + esc(q) : 'Most played stations'}</h2>
+      <p class="sub">Full-length music from licensed broadcasters. Nothing is downloaded,
+        and only stations Plectra can decode (MP3 and Ogg) are listed.</p>
+      <ul>${stations.map(st => `
+        <li>
+          <button class="grow" data-station='${esc(JSON.stringify({url: st.url, name: st.name, uuid: st.uuid}))}'>
+            ${esc(st.name)} <span class="sub">— ${esc(st.country || 'unknown')}${
+              st.tags ? ' · ' + esc(st.tags.split(',').slice(0, 2).join(', ')) : ''}</span>
+          </button>
+          <span class="meta">${st.codec} ${st.bitrate}k</span>
+        </li>`).join('')}</ul>`
+      : emptyState('No stations found.',
+          q ? 'Try a different name, or clear the search to see the most played stations.'
+            : 'The station directory could not be reached.');
   }
   if (view === 'likes') {
     listing = (await get('/likes')) || [];
@@ -341,6 +362,9 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
+  const station = e.target.closest('[data-station]');
+  if (station) return post('/radio/play', JSON.parse(station.dataset.station));
+
   const play = e.target.closest('[data-play]');
   if (play) return post('/player/play', JSON.parse(play.dataset.play));
 
@@ -461,9 +485,9 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 $('#q').oninput = () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    view = $('#q').value.trim() ? 'search' : 'albums';
+    if (view !== 'radio') view = $('#q').value.trim() ? 'search' : 'albums';
     render();
-  }, 200);
+  }, 300);
 };
 
 $('#toggle').onclick = () => post(state.playing ? '/player/pause' : '/player/resume');

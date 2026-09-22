@@ -28,6 +28,7 @@ import (
 	"github.com/plectra/plectra/internal/metadata"
 	"github.com/plectra/plectra/internal/player"
 	"github.com/plectra/plectra/internal/playlist"
+	"github.com/plectra/plectra/internal/radio"
 	"github.com/plectra/plectra/internal/store"
 	"github.com/plectra/plectra/web"
 )
@@ -156,7 +157,7 @@ func main() {
 	if err := creds.Load(ctx); err != nil {
 		log.Printf("credentials: %v", err) // stored keys are a convenience, not a requirement
 	}
-	api = api.WithCredentials(creds)
+	api = api.WithCredentials(creds).WithRadio(radio.New())
 
 	handler := api.Handler()
 
