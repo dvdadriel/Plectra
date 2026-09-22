@@ -4,5 +4,5 @@ package web
 
 import "embed"
 
-//go:embed index.html fonts
+//go:embed index.html style.css fonts
 var FS embed.FS

@@ -3,6 +3,7 @@
 <title>Plectra</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="/style.css">
 <script>
   // Applied before first paint so a forced theme never flashes the other one.
   try {
@@ -10,502 +11,10 @@
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   } catch (e) {}
 </script>
-<style>
-@font-face {
-  font-family: "Newsreader";
-  src: url("/fonts/newsreader-latin.woff2") format("woff2-variations");
-  font-weight: 400 700;
-  font-display: swap;
-}
-
-/* The four palette colours are fixed. Both themes use all four; only the roles
-   move. Measured contrast decides what each one is allowed to do:
-   leather on navy is 2.65:1, so leather is never text in the dark theme. */
-:root {
-  --navy: #0a2947;
-  --cream: #f3e4c9;
-  --sage: #d3d4c0;
-  --leather: #8b5e3c;
-
-  --page: var(--cream);
-  --panel: var(--sage);
-  --panel-soft: color-mix(in oklab, var(--sage) 45%, var(--cream));
-  --ink: var(--navy);
-  --ink-dim: color-mix(in oklab, var(--navy) 78%, var(--cream));
-  --accent: var(--leather);
-  --accent-ink: var(--navy);
-  --rule: color-mix(in oklab, var(--leather) 30%, transparent);
-  --rule-strong: color-mix(in oklab, var(--leather) 55%, transparent);
-  --focus: var(--leather);
-  --sleeve: color-mix(in oklab, var(--sage) 70%, var(--cream));
-
-  --serif: "Newsreader", Georgia, "Times New Roman", serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-
-  --z-panel: 10;
-  --z-transport: 20;
-
-  --step: 120ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --page: var(--navy);
-    --panel: color-mix(in oklab, var(--navy) 92%, var(--cream));
-    --panel-soft: color-mix(in oklab, var(--navy) 96%, var(--cream));
-    --ink: var(--cream);
-    --ink-dim: var(--sage);
-    --accent-ink: var(--cream);
-    --rule: color-mix(in oklab, var(--sage) 22%, transparent);
-    --rule-strong: color-mix(in oklab, var(--sage) 40%, transparent);
-    --focus: var(--sage);
-    --sleeve: color-mix(in oklab, var(--navy) 86%, var(--cream));
-  }
-}
-
-:root[data-theme="dark"] {
-  --page: var(--navy);
-  --panel: color-mix(in oklab, var(--navy) 92%, var(--cream));
-  --panel-soft: color-mix(in oklab, var(--navy) 96%, var(--cream));
-  --ink: var(--cream);
-  --ink-dim: var(--sage);
-  --accent-ink: var(--cream);
-  --rule: color-mix(in oklab, var(--sage) 22%, transparent);
-  --rule-strong: color-mix(in oklab, var(--sage) 40%, transparent);
-  --focus: var(--sage);
-  --sleeve: color-mix(in oklab, var(--navy) 86%, var(--cream));
-}
-
-* { box-sizing: border-box; }
-
-html { color-scheme: light dark; }
-
-body {
-  margin: 0;
-  background: var(--page);
-  color: var(--ink);
-  font: 400 15px/1.55 var(--serif);
-  padding-bottom: calc(var(--transport-h, 120px) + 18px);
-  -webkit-font-smoothing: antialiased;
-}
-
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-/* ---- faceplate header ---- */
-
-header {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-panel);
-  background: var(--page);
-  border-bottom: 1px solid var(--rule-strong);
-  padding-block: 14px 0;
-}
-
-.plate {
-  max-width: 1100px;
-  margin-inline: auto;
-  padding-inline: 20px;
-  display: flex;
-  align-items: baseline;
-  gap: 18px;
-  flex-wrap: wrap;
-}
-
-.wordmark {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  margin: 0;
-}
-
-.serial {
-  font: 400 11px/1 var(--mono);
-  color: var(--ink-dim);
-  letter-spacing: 0.08em;
-  margin-left: -8px;
-}
-
-/* The double hairline is the silkscreen rule on a receiver faceplate. */
-.plate-rule {
-  max-width: 1100px;
-  margin: 12px auto 0;
-  padding-inline: 20px;
-}
-.plate-rule::before,
-.plate-rule::after {
-  content: "";
-  display: block;
-  border-top: 1px solid var(--rule);
-}
-.plate-rule::after { margin-top: 2px; }
-
-nav {
-  display: flex;
-  gap: 2px;
-  flex-wrap: wrap;
-  margin-right: auto;
-  padding: 2px;
-  border: 1px solid var(--rule);
-  border-radius: 3px;
-  background: color-mix(in oklab, var(--panel) 40%, transparent);
-}
-
-nav button {
-  font: 400 13px/1 var(--serif);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  padding: 7px 10px;
-  cursor: pointer;
-  transition: color var(--step), border-color var(--step);
-}
-nav button:hover { color: var(--ink); }
-nav button[aria-current="true"] {
-  color: var(--ink);
-  border-color: var(--rule-strong);
-  background: var(--panel-soft);
-}
-
-.tools { display: flex; gap: 8px; align-items: center; flex: 1 1 200px; }
-
-#q {
-  flex: 1;
-  min-width: 0;
-  font: 400 14px/1 var(--serif);
-  color: var(--ink);
-  background: var(--panel-soft);
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  padding: 8px 10px;
-}
-#q::placeholder { color: var(--ink-dim); opacity: 1; }
-
-.switch {
-  font: 400 11px/1 var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  background: none;
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  padding: 8px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.switch:hover { color: var(--ink); border-color: var(--rule-strong); }
-
-/* ---- content ---- */
-
-main {
-  max-width: 1100px;
-  margin-inline: auto;
-  padding: 22px 20px 0;
-}
-
-h2 {
-  font: 400 12px/1 var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  margin: 26px 0 10px;
-}
-h2:first-child { margin-top: 0; }
-
-.grid {
-  display: grid;
-  /* auto-fill, not auto-fit: with one album in the library, auto-fit collapses
-     the empty tracks and stretches that single sleeve across the whole page. */
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 20px 16px;
-}
-
-.sleeve-card { cursor: pointer; }
-.sleeve {
-  width: 100%;
-  aspect-ratio: 1;
-  max-width: 100%;
-  object-fit: cover;
-  display: block;
-  background: var(--sleeve);
-  border: 1px solid var(--rule);
-  border-radius: 1px;
-  transition: border-color var(--step);
-}
-.sleeve-card:hover .sleeve {
-  border-color: var(--rule-strong);
-  translate: 0 -1px;
-}
-.sleeve { transition: border-color var(--step), translate var(--step); }
-@media (prefers-reduced-motion: reduce) {
-  .sleeve { transition: none; }
-  .sleeve-card:hover .sleeve { translate: none; }
-}
-.sleeve-card .t {
-  margin-top: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  text-wrap: balance;
-}
-.sleeve-card .s, .sub { color: var(--ink-dim); font-size: 13px; }
-.sub-mono { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
-
-ul { list-style: none; margin: 0; padding: 0; }
-
-li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 2px;
-  border-bottom: 1px solid var(--rule);
-}
-li .no {
-  font: 400 12px/1 var(--mono);
-  color: var(--ink-dim);
-  min-width: 2ch;
-  text-align: right;
-}
-li .grow {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-}
-li .grow:hover { text-decoration: underline; text-underline-offset: 3px; }
-
-/* The playing row is marked by a leather bar, not leather text: on navy the
-   brown only reaches 2.65:1 and would be unreadable. */
-li.playing {
-  position: relative;
-  padding-left: 10px;
-}
-li.playing::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  translate: 0 -50%;
-  width: 3px;
-  height: 18px;
-  background: var(--accent);
-}
-li.playing .grow { font-weight: 600; }
-
-.dur { font: 400 12px/1 var(--mono); color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-
-.icon {
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  color: var(--ink-dim);
-  font-size: 15px;
-  line-height: 1;
-  padding: 6px 7px;
-  cursor: pointer;
-  transition: color var(--step), border-color var(--step);
-}
-.icon:hover { color: var(--ink); border-color: var(--rule); }
-.icon[aria-pressed="true"] { color: var(--accent-ink); }
-.icon[aria-pressed="true"]::after { content: ""; }
-
-.empty { color: var(--ink-dim); padding: 28px 0; max-width: 60ch; }
-
-button.action {
-  font: 400 13px/1 var(--serif);
-  color: var(--ink);
-  background: var(--panel-soft);
-  border: 1px solid var(--rule-strong);
-  border-radius: 2px;
-  padding: 9px 12px;
-  cursor: pointer;
-  margin: 0 6px 8px 0;
-  transition: background var(--step);
-}
-button.action:hover { background: var(--panel); }
-
-input.path {
-  width: 100%;
-  max-width: 440px;
-  font: 400 13px/1 var(--mono);
-  color: var(--ink);
-  background: var(--panel-soft);
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  padding: 9px 10px;
-  margin-bottom: 8px;
-}
-
-/* ---- transport: the control strip along the bottom of the panel ---- */
-
-footer {
-  position: fixed;
-  inset: auto 0 0 0;
-  z-index: var(--z-transport);
-  background: var(--panel);
-  border-top: 1px solid var(--rule-strong);
-}
-
-.strip {
-  max-width: 1100px;
-  margin-inline: auto;
-  padding: 10px 20px 14px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px 16px;
-  align-items: center;
-}
-
-/* Clicking the rail seeks; it is a real control, so it is a real button. */
-#rail {
-  grid-column: 1 / -1;
-  width: 100%;
-  height: 4px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: color-mix(in oklab, var(--ink) 18%, transparent);
-  cursor: pointer;
-  overflow: hidden;
-}
-#rail > div {
-  height: 100%;
-  width: 100%;
-  background: var(--accent);
-  transform-origin: left center;
-  transform: scaleX(var(--progress, 0));
-  transition: transform 220ms linear;
-}
-@media (prefers-reduced-motion: reduce) {
-  #rail > div { transition: none; }
-}
-
-.readout {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-}
-.time {
-  font: 400 12px/1 var(--mono);
-  color: var(--ink-dim);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-#now {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-#now .by { font-weight: 400; }
-#now .by { color: var(--ink-dim); }
-
-.keys { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-
-/* Mechanical keys: square, hairline, and they depress. */
-.key {
-  min-width: 44px;
-  height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  line-height: 1;
-  color: var(--ink);
-  background: var(--panel-soft);
-  border: 1px solid var(--rule-strong);
-  border-radius: 2px;
-  cursor: pointer;
-  transition: translate var(--step), background var(--step);
-}
-.key:hover { background: var(--panel); }
-.key:active { translate: 0 1px; }
-.key[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--cream);
-}
-@media (prefers-reduced-motion: reduce) {
-  .key, nav button, .icon, button.action { transition: none; }
-  .key:active { translate: none; }
-}
-
-/* The fader shows gain, a quantity the player actually reports. Nothing here
-   animates to audio it cannot measure. */
-.fader { display: flex; align-items: center; gap: 8px; }
-.fader label { font: 400 11px/1 var(--mono); color: var(--ink-dim); letter-spacing: 0.06em; }
-#vol {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 108px;
-  height: 20px;
-  background: none;
-  cursor: pointer;
-}
-#vol::-webkit-slider-runnable-track {
-  height: 6px;
-  background: repeating-linear-gradient(
-    to right,
-    color-mix(in oklab, var(--ink) 30%, transparent) 0 2px,
-    transparent 2px 7px
-  );
-}
-#vol::-moz-range-track {
-  height: 6px;
-  background: repeating-linear-gradient(
-    to right,
-    color-mix(in oklab, var(--ink) 30%, transparent) 0 2px,
-    transparent 2px 7px
-  );
-}
-#vol::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 10px;
-  height: 20px;
-  margin-top: -7px;
-  background: var(--accent);
-  border: 1px solid var(--rule-strong);
-  border-radius: 1px;
-}
-#vol::-moz-range-thumb {
-  width: 10px;
-  height: 20px;
-  background: var(--accent);
-  border: 1px solid var(--rule-strong);
-  border-radius: 1px;
-}
-
-@media (max-width: 560px) {
-  .strip { grid-template-columns: 1fr; }
-  .keys { justify-content: space-between; }
-  .fader { flex: 1; justify-content: flex-end; }
-  #vol { width: 88px; }
-}
-</style>
 
 <header>
-  <div class="plate">
+  <div class="bar">
     <h1 class="wordmark">Plectra</h1>
-    <span class="serial">MK I</span>
     <nav aria-label="Library">
       <button data-view="albums" aria-current="true">Albums</button>
       <button data-view="artists">Artists</button>
@@ -517,16 +26,15 @@ footer {
     <div class="tools">
       <label class="visually-hidden" for="q">Search library</label>
       <input id="q" type="search" placeholder="Search library" autocomplete="off">
-      <button id="theme" class="switch" type="button">Theme: system</button>
+      <button id="theme" class="ghost" type="button">Theme: system</button>
     </div>
   </div>
-  <div class="plate-rule" aria-hidden="true"></div>
 </header>
 
 <main id="main" tabindex="-1"></main>
 
 <footer>
-  <div class="strip">
+  <div class="player">
     <button id="rail" type="button" aria-label="Seek"><div></div></button>
     <div class="readout">
       <span class="time" id="elapsed">0:00</span>
@@ -534,21 +42,41 @@ footer {
       <span class="time" id="total"></span>
     </div>
     <div class="keys">
-      <button class="key" id="prev" type="button" aria-label="Previous track">&#9664;&#9664;</button>
-      <button class="key" id="toggle" type="button" aria-label="Play">&#9654;</button>
-      <button class="key" id="next" type="button" aria-label="Next track">&#9654;&#9654;</button>
-      <button class="key" id="shuffle" type="button" aria-label="Shuffle" aria-pressed="false">&#8646;</button>
-      <button class="key" id="repeat" type="button" aria-label="Repeat: off" aria-pressed="false">&#8635;</button>
+      <button class="key" id="prev" type="button" aria-label="Previous track"><svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M7 6h2v12H7zm3 6 8-6v12z"/></svg></button>
+      <button class="key primary" id="toggle" type="button" aria-label="Play">&#9654;</button>
+      <button class="key" id="next" type="button" aria-label="Next track"><svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M15 6h2v12h-2zM6 6l8 6-8 6z"/></svg></button>
+    </div>
+    <div class="extras">
+      <button class="key" id="shuffle" type="button" aria-label="Shuffle" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 7h3.5l2.5 3m4 4 2.5 3H20M4 17h3.5L16 7h4"/><path fill="currentColor" d="m17.5 4 3 3-3 3zm0 10 3 3-3 3z"/></svg></button>
+      <button class="key" id="repeat" type="button" aria-label="Repeat: off" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M7 7h10v4M17 17H7v-4"/><path fill="currentColor" d="m6 9-2.5-2L6 5zm12 6 2.5 2-2.5 2z"/></svg></button>
       <button class="key" id="like" type="button" aria-label="Like this track" aria-pressed="false">&#9825;</button>
       <span class="fader">
-        <label for="vol">Gain</label>
+        <label class="visually-hidden" for="vol">Volume</label>
         <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
       </span>
     </div>
   </div>
 </footer>
+
 <script>
 const $ = s => document.querySelector(s);
+
+// A missing cover becomes a sleeve carrying the album's initial — something to
+// read and to tell albums apart by, rather than an identical grey square.
+function emptySleeve(img) {
+  const div = document.createElement('div');
+  div.className = 'art art-empty';
+  div.textContent = img.dataset.initial || '?';
+  div.setAttribute('aria-hidden', 'true');
+  img.replaceWith(div);
+}
+
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M8 5.5v13l11-6.5z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M7 5h3.2v14H7zm6.8 0H17v14h-3.2z"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M12 20s-7-4.4-7-9.2A3.9 3.9 0 0 1 12 8a3.9 3.9 0 0 1 7 2.8C19 15.6 12 20 12 20Z"/></svg>',
+  heartFull: '<svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="currentColor" d="M12 20s-7-4.4-7-9.2A3.9 3.9 0 0 1 12 8a3.9 3.9 0 0 1 7 2.8C19 15.6 12 20 12 20Z"/></svg>',
+};
 const get = p => fetch('/api' + p).then(r => r.ok ? r.json() : null);
 const post = (p, body) => fetch('/api' + p, {method: 'POST', body: body && JSON.stringify(body)});
 const del = p => fetch('/api' + p, {method: 'DELETE'});
@@ -582,11 +110,11 @@ paintTheme();
 
 /* ---- views ---- */
 
-const sleeveGrid = albums => albums.length ? `<div class="grid">` + albums.map(a => `
-  <div class="sleeve-card" data-play='{"albumID":${a.id}}' tabindex="0" role="button"
+const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a => `
+  <div class="card" data-play='{"albumID":${a.id}}' tabindex="0" role="button"
        aria-label="Play ${esc(a.title)} by ${esc(a.artist)}">
-    <img class="sleeve" loading="lazy" src="/api/cover/${a.id}" alt=""
-         onerror="this.replaceWith(Object.assign(document.createElement('div'), {className:'sleeve'}))">
+    <img class="art" loading="lazy" src="/api/cover/${a.id}" alt=""
+         data-initial="${esc((a.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">
     <div class="t">${esc(a.title)}</div>
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
   </div>`).join('') + `</div>` : emptyState('No albums yet.', 'Point <code>-music</code> at a folder of audio files and they appear here as they are scanned.');
@@ -601,7 +129,7 @@ const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t,
     </button>
     <span class="dur">${mmss(t.durationMs)}</span>
     <button class="icon" data-like="${t.id}" aria-pressed="${liked.has(t.id)}"
-            aria-label="${liked.has(t.id) ? 'Unlike' : 'Like'} ${esc(t.title)}">${liked.has(t.id) ? '♥' : '♡'}</button>
+            aria-label="${liked.has(t.id) ? 'Unlike' : 'Like'} ${esc(t.title)}">${liked.has(t.id) ? ICON.heartFull : ICON.heart}</button>
     ${opts.playlist ? `<button class="icon" data-remove="${t.id}" aria-label="Remove ${esc(t.title)} from playlist">✕</button>` : ''}
   </li>`).join('') + '</ul>' : emptyState('Nothing here yet.', 'Play something and it will show up.');
 
@@ -614,7 +142,7 @@ async function render() {
 
   if (view === 'albums') {
     listing = [];
-    return m.innerHTML = sleeveGrid((await get('/albums')) || []);
+    return m.innerHTML = albumGrid((await get('/albums')) || []);
   }
   if (view === 'artists') {
     const as = (await get('/artists')) || [];
@@ -637,7 +165,7 @@ async function render() {
     return m.innerHTML = `<button class="action" id="newpl">New playlist</button>` + (ls.length ? '<ul>' + ls.map(p => `
       <li>
         <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
-        <span class="sub-mono">${p.trackCount} tracks</span>
+        <span class="meta">${p.trackCount} tracks</span>
         <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">▶</button>
         <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">✕</button>
       </li>`).join('') + '</ul>'
@@ -647,7 +175,7 @@ async function render() {
     const r = await get('/search?q=' + encodeURIComponent($('#q').value));
     listing = r?.tracks || [];
     return m.innerHTML =
-      ((r?.albums?.length ? '<h2>Albums</h2>' + sleeveGrid(r.albums) : '') +
+      ((r?.albums?.length ? '<h2>Albums</h2>' + albumGrid(r.albums) : '') +
        (r?.tracks?.length ? '<h2>Tracks</h2>' + trackList(r.tracks) : ''))
       || emptyState('No matches.', 'Search covers track, album and artist names.');
   }
@@ -660,7 +188,7 @@ async function settingsPanel() {
   return `
     <h2>Metadata</h2>
     ${enrich
-      ? `<p class="sub-mono">${enrich.pending} pending · ${enrich.done} done · ${enrich.failed} failed</p>
+      ? `<p class="meta">${enrich.pending} pending · ${enrich.done} done · ${enrich.failed} failed</p>
          <button class="action" id="enrich">Run enrichment</button>
          <button class="action" id="reenrich">Re-run everything</button>`
       : `<p class="empty">Enrichment is off. Start with <code>-enrich</code> to turn it on.</p>`}
@@ -668,7 +196,7 @@ async function settingsPanel() {
 
     <h2>Listening history</h2>
     ${hist
-      ? `<p class="sub-mono">${hist.total} plays${sources ? ' · ' + sources : ''}${hist.unmatched ? ' · ' + hist.unmatched + ' unmatched' : ''}</p>`
+      ? `<p class="meta">${hist.total} plays${sources ? ' · ' + sources : ''}${hist.unmatched ? ' · ' + hist.unmatched + ' unmatched' : ''}</p>`
       : ''}
     <p class="sub">Spotify's privacy export holds your full history — request it in Spotify's
        Privacy Settings, unpack the zip, then give the folder path here.</p>
@@ -832,18 +360,19 @@ function paint() {
     t?.durationMs ? Math.min(1, state.positionMs / t.durationMs) : 0);
 
   const playing = !!state.playing;
-  $('#toggle').innerHTML = playing ? '&#10073;&#10073;' : '&#9654;';
+  $('#toggle').innerHTML = playing ? ICON.pause : ICON.play;
   $('#toggle').setAttribute('aria-label', playing ? 'Pause' : 'Play');
 
   $('#shuffle').setAttribute('aria-pressed', String(!!state.shuffle));
   const rep = state.repeat || 'off';
   $('#repeat').setAttribute('aria-pressed', String(rep !== 'off'));
   $('#repeat').setAttribute('aria-label', 'Repeat: ' + rep);
-  $('#repeat').innerHTML = rep === 'one' ? '&#8634;' : '&#8635;';
+  $('#repeat').classList.toggle('one', rep === 'one');
 
   const isLiked = !!t && liked.has(t.id);
   $('#like').setAttribute('aria-pressed', String(isLiked));
-  $('#like').textContent = isLiked ? '♥' : '♡';
+  $('#like').classList.toggle('liked', isLiked);
+  $('#like').innerHTML = isLiked ? ICON.heartFull : ICON.heart;
   $('#vol').value = state.volume ?? 1;
 }
 
@@ -851,7 +380,7 @@ function paint() {
 // parked underneath it.
 const transport = document.querySelector('footer');
 const sizeTransport = () =>
-  document.documentElement.style.setProperty('--transport-h', transport.offsetHeight + 'px');
+  document.documentElement.style.setProperty('--player-h', transport.offsetHeight + 'px');
 new ResizeObserver(sizeTransport).observe(transport);
 sizeTransport();
 
@@ -867,5 +396,3 @@ new EventSource('/api/events').onmessage = e => {
 
 render();
 </script>
-
-<style>.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}</style>
