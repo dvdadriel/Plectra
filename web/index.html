@@ -182,6 +182,22 @@ async function render() {
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
 
+// Scanning is something the user asks for, so the panel reports what the last
+// scan did rather than implying the library keeps itself up to date.
+function scanPanel(scan) {
+  if (!scan) return '<p class="sub">The scanner is unavailable.</p>';
+  const when = scan.finishedAt
+    ? `Last scan ${new Date(scan.finishedAt * 1000).toLocaleString()}: ` +
+      `${scan.scanned} added or updated, ${scan.skipped} unchanged` +
+      (scan.failed ? `, ${scan.failed} failed` : '')
+    : 'No scan yet in this session.';
+  return `
+    <p class="sub">${esc(scan.root || '')}</p>
+    <p class="sub" id="scanwhen">${scan.running ? 'Scanning…' : esc(when)}</p>
+    ${scan.error ? `<p class="sub">Last error: ${esc(scan.error)}</p>` : ''}
+    <button class="action" id="scan"${scan.running ? ' disabled' : ''}>Sync local music</button>`;
+}
+
 // The panel says what is actually true: no credentials, credentials but no
 // account, or connected.
 function spotifyPanel(s) {
@@ -195,33 +211,40 @@ function spotifyPanel(s) {
       URI Plectra prints on startup.
     </div>`;
   }
-  if (!s.credentialsValid) {
-    return `<div class="empty">
+  const connect = `<a href="/api/spotify/login"><button class="action" type="button">${
+    s.linked ? 'Reconnect account' : 'Connect account'}</button></a>`;
+
+  const warning = !s.credentialsValid ? `<div class="empty">
       <strong>Those credentials cannot be right</strong>
       Spotify client ids and secrets are 32 hex characters. What Plectra was
       started with is a different shape, so Spotify will answer
-      <code>INVALID_CLIENT</code> before you ever see a consent screen.
-      Copy both values from your app at developer.spotify.com.
-    </div>`;
-  }
+      <code>INVALID_CLIENT</code> instead of a consent screen. Copy both values
+      from your app at developer.spotify.com.
+    </div>` : '';
+
   if (!s.linked) {
-    return `<div>
-      <a href="/api/spotify/login"><button class="action" type="button">Connect account</button></a>
+    return `${warning}<div>${connect}
       <span class="sub">Opens Spotify to authorise this instance.</span>
     </div>`;
   }
-  return `<p class="sub"><strong>Account connected.</strong> Imports match against your local library.</p>
+  return `${warning}
+    <p class="sub"><strong>Account connected.</strong> Imports match against your local library.</p>
     <div>
       <button class="action" id="imp-pl">Import playlists</button>
       <button class="action" id="imp-liked">Import liked songs</button>
-      <a href="/api/spotify/login"><button class="action" type="button">Reconnect</button></a>
+      ${connect}
     </div>`;
 }
 
 async function settingsPanel() {
-  const [enrich, hist, spotify] = await Promise.all([get('/enrich'), get('/history'), get('/spotify/status')]);
+  const [enrich, hist, spotify, scan] = await Promise.all([
+    get('/enrich'), get('/history'), get('/spotify/status'), get('/library/scan'),
+  ]);
   const sources = hist ? Object.entries(hist.bySource || {}).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
   return `
+    <h2>Local music</h2>
+    ${scanPanel(scan)}
+
     <h2>Metadata</h2>
     ${enrich
       ? `<p class="meta">${enrich.pending} pending · ${enrich.done} done · ${enrich.failed} failed</p>
@@ -303,6 +326,21 @@ async function onMainClick(e) {
     return;
   }
 
+  if (e.target.id === 'scan') {
+    e.target.disabled = true;
+    $('#scanwhen').textContent = 'Scanning…';
+    await post('/library/scan');
+    // Poll until it finishes: a cold library takes a while, and the button
+    // should not claim success before the walk is over.
+    const tick = setInterval(async () => {
+      const s = await get('/library/scan');
+      if (s && !s.running) {
+        clearInterval(tick);
+        render();
+      }
+    }, 700);
+    return;
+  }
   if (e.target.id === 'enrich' || e.target.id === 'reenrich') {
     const force = e.target.id === 'reenrich' ? '?force=1' : '';
     const r = await (await fetch('/api/enrich' + force, {method: 'POST'})).json();
