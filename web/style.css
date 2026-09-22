@@ -125,7 +125,9 @@ header {
   position: sticky;
   top: 0;
   z-index: var(--z-header);
-  background: color-mix(in oklab, var(--page) 92%, transparent);
+  /* Fully opaque: at 92% the content scrolling underneath showed through the
+     header and collided with the navigation. */
+  background: var(--page);
   border-bottom: 1px solid var(--line);
 }
 
