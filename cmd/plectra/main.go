@@ -135,10 +135,6 @@ func main() {
 		sp := metadata.NewSpotify(st, *spotifyID, *spotifySecret, redirect, metadata.SystemClock)
 		providers = append(providers, sp)
 		link = sp
-		// The recently-played bridge covers the transition period only: Spotify
-		// keeps just the last fifty plays, and it dries up once Plectra is the
-		// main player.
-		go pollRecentlyPlayed(ctx, st, sp, recorder)
 	}
 	if *enrich {
 		providers = append([]metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}, providers...)
@@ -220,43 +216,6 @@ func saveState(st *store.Store, pl *player.Player) {
 	})
 	if err != nil {
 		log.Printf("save state: %v", err)
-	}
-}
-
-// pollRecentlyPlayed copies Spotify listens into the local history every 15
-// minutes, resuming from the newest row already stored.
-func pollRecentlyPlayed(ctx context.Context, st *store.Store, sp *metadata.Spotify, rec *history.Recorder) {
-	tick := time.NewTicker(15 * time.Minute)
-	defer tick.Stop()
-	for {
-		last, err := st.LastPlayedAt(ctx, store.SourceSpotifyAPI)
-		if err == nil {
-			listens, err := sp.RecentlyPlayed(ctx, time.Unix(last, 0))
-			switch {
-			case errors.Is(err, metadata.ErrNotAuthorized):
-				// Nothing linked yet: stay quiet and try again later.
-			case err != nil:
-				log.Printf("recently-played: %v", err)
-			default:
-				plays := make([]history.ExternalPlay, len(listens))
-				for i, l := range listens {
-					plays[i] = history.ExternalPlay{
-						PlayedAt: l.PlayedAt, Artist: l.Artist, Album: l.Album,
-						Title: l.Title, SpotifyID: l.SpotifyID,
-					}
-				}
-				if res, err := rec.ImportExternal(ctx, store.SourceSpotifyAPI, plays); err != nil {
-					log.Printf("recently-played: %v", err)
-				} else if res.Imported > 0 {
-					log.Printf("recently-played: %d new listens", res.Imported)
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
 	}
 }
 
