@@ -28,8 +28,12 @@ type Decoder interface {
 	Close() error
 }
 
-// Open picks a decoder by file extension.
+// Open picks a decoder for a track's location: a file on disk, or a network
+// stream when the location is a URL.
 func Open(path string) (Decoder, error) {
+	if IsStream(path) {
+		return openStream(path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
