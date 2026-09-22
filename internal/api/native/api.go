@@ -50,6 +50,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", a.search)
 	mux.HandleFunc("GET /api/cover/{id}", a.cover)
 
+	mux.HandleFunc("POST /api/playlists/import", a.importPlaylists)
 	mux.HandleFunc("GET /api/playlists", a.playlists)
 	mux.HandleFunc("POST /api/playlists", a.createPlaylist)
 	mux.HandleFunc("GET /api/playlists/{id}", a.playlistTracks)
