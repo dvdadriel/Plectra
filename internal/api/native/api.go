@@ -20,6 +20,7 @@ type API struct {
 	pl      *player.Player
 	lists   *playlist.Service
 	enrich  Enricher    // nil when no metadata provider is configured
+	history History     // nil when history routes are not wired
 	spotify SpotifyLink // nil when Spotify credentials are absent
 	web     fs.FS
 }
@@ -69,6 +70,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", a.events)
 
 	a.enrichRoutes(mux)
+	a.historyRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

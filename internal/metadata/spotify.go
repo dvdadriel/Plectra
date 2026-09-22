@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,4 +257,47 @@ type spotifyTrack struct {
 	Name    string          `json:"name"`
 	Album   spotifyAlbum    `json:"album"`
 	Artists []spotifyArtist `json:"artists"`
+}
+
+// Listen is one play reported by Spotify's recently-played endpoint.
+type Listen struct {
+	PlayedAt  time.Time
+	Artist    string
+	Album     string
+	Title     string
+	SpotifyID string
+}
+
+// RecentlyPlayed returns listens after the given time. Spotify keeps only the
+// last fifty, so this is a bridge for the transition period — it dries up by
+// itself once Plectra is the main player. The real history comes from the
+// privacy export.
+func (s *Spotify) RecentlyPlayed(ctx context.Context, after time.Time) ([]Listen, error) {
+	path := "/me/player/recently-played?limit=50"
+	if !after.IsZero() {
+		path += "&after=" + strconv.FormatInt(after.UnixMilli(), 10)
+	}
+	var body struct {
+		Items []struct {
+			PlayedAt string       `json:"played_at"`
+			Track    spotifyTrack `json:"track"`
+		} `json:"items"`
+	}
+	if err := s.get(ctx, path, &body); err != nil {
+		return nil, err
+	}
+
+	out := make([]Listen, 0, len(body.Items))
+	for _, item := range body.Items {
+		at, err := time.Parse(time.RFC3339, item.PlayedAt)
+		if err != nil {
+			continue
+		}
+		l := Listen{PlayedAt: at, Title: item.Track.Name, Album: item.Track.Album.Name, SpotifyID: item.Track.ID}
+		if len(item.Track.Artists) > 0 {
+			l.Artist = item.Track.Artists[0].Name
+		}
+		out = append(out, l)
+	}
+	return out, nil
 }

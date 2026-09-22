@@ -143,3 +143,10 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     refresh_token TEXT NOT NULL,
     expires_at    INTEGER NOT NULL
 );
+
+-- Imported history is deduplicated on re-import: the same export applied twice
+-- must not double every statistic. Local plays are exempt — two genuine listens
+-- can share a second.
+CREATE UNIQUE INDEX IF NOT EXISTS plays_import_unique
+    ON plays(source, played_at, COALESCE(raw_artist,''), COALESCE(raw_title,''))
+    WHERE source <> 'plectra';

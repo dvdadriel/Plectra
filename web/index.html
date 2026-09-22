@@ -92,6 +92,20 @@ const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t,
     ${opts.playlistID ? `<button class="icon" data-remove="${t.id}">✕</button>` : ''}
   </li>`).join('') + '</ul>' : '<p class="empty">Nothing here yet.</p>';
 
+async function historyPanel() {
+  let h = null;
+  try { h = await (await fetch('/api/history')).json(); } catch {}
+  if (!h) return '<p class="empty">History is unavailable.</p>';
+  const sources = Object.entries(h.bySource || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'nothing yet';
+  return `<p class="sub">${h.total} plays (${sources})${h.unmatched ? ` · ${h.unmatched} not in your library` : ''}</p>
+    <p class="sub">Spotify's privacy export holds your full history. Request it in
+      Spotify's Privacy Settings, unpack the zip, then give the folder path here.</p>
+    <input id="gdpr" placeholder="/path/to/Spotify Extended Streaming History" style="width:100%;max-width:420px;padding:6px 9px">
+    <button id="import-gdpr">Import export</button>
+    <button id="rematch">Rematch unmatched</button>
+    <div id="histresult" class="sub"></div>`;
+}
+
 async function render() {
   liked = new Set((await get('/likes')).map(t => t.id));
   const m = $('#main');
@@ -122,6 +136,8 @@ async function render() {
         <button id="enrich">Run enrichment</button>
         <button id="reenrich">Re-run everything</button>`
       : '<p class="empty">Enrichment is off (started with -enrich=false).</p>'}
+      <h2>Listening history</h2>
+      ${await historyPanel()}
       <h2>Spotify</h2>
       <p class="sub">Metadata and migration only — Spotify never provides audio.</p>
       <a href="/api/spotify/login"><button>Connect account</button></a>
@@ -170,6 +186,20 @@ $('#main').addEventListener('click', async e => {
     const force = e.target.id === 'reenrich' ? '?force=1' : '';
     const r = await (await fetch('/api/enrich' + force, {method:'POST'})).json();
     return $('#main').querySelector('.sub').textContent = `${r.queued} jobs queued — this runs in the background.`;
+  }
+  if (e.target.id === 'import-gdpr') {
+    const path = $('#gdpr').value.trim();
+    if (!path) return $('#histresult').textContent = 'Give the folder path from the unpacked export.';
+    $('#histresult').textContent = 'Importing… large exports take a while.';
+    const resp = await fetch('/api/history/import', {method:'POST', body: JSON.stringify({path})});
+    if (!resp.ok) return $('#histresult').textContent = await resp.text();
+    const r = await resp.json();
+    return $('#histresult').textContent =
+      `${r.imported} new plays from ${r.files} files · ${r.matched} matched, ${r.unmatched} not in your library`;
+  }
+  if (e.target.id === 'rematch') {
+    const r = await (await fetch('/api/history/rematch', {method:'POST'})).json();
+    return $('#histresult').textContent = `${r.claimed} plays claimed by tracks in your library.`;
   }
   if (e.target.id === 'imp-pl' || e.target.id === 'imp-liked') {
     const what = e.target.id === 'imp-liked' ? 'liked' : 'playlists';
