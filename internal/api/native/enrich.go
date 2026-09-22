@@ -162,6 +162,10 @@ func (a *API) spotifyImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "link your Spotify account first", 401)
 		return
 	}
+	if errors.Is(err, metadata.ErrForbidden) {
+		http.Error(w, metadata.ErrForbidden.Error(), 403)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return

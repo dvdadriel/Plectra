@@ -436,7 +436,13 @@ async function onMainClick(e) {
     const what = e.target.id === 'imp-liked' ? 'liked' : 'playlists';
     $('#impresult').textContent = 'Importing…';
     const resp = await fetch('/api/spotify/import?what=' + what, {method: 'POST'});
-    if (!resp.ok) return $('#impresult').textContent = await resp.text();
+    if (!resp.ok) {
+      const text = (await resp.text()).trim();
+      $('#impresult').textContent = resp.status === 403
+        ? text  // the server explains the development-mode user list
+        : `${text} (HTTP ${resp.status})`;
+      return;
+    }
     const r = await resp.json();
     $('#impresult').textContent =
       `${r.matched} tracks matched${r.playlists ? ', ' + r.playlists + ' playlists' : ''}` +

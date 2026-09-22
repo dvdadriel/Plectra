@@ -95,6 +95,15 @@ func looksLikeCredential(v string) bool {
 // ErrNotAuthorized means the user has not linked their Spotify account yet.
 var ErrNotAuthorized = errors.New("spotify: not authorized")
 
+// ErrForbidden is Spotify refusing a token it recognises. For a self-hosted
+// application this nearly always means one thing: the app is in development
+// mode, which serves only the accounts listed in its dashboard, and this
+// account is not one of them.
+var ErrForbidden = errors.New("this Spotify account is not on your application's user list. " +
+	"An app in development mode only works for accounts added under " +
+	"Settings → User Management in the Spotify dashboard (up to five). " +
+	"Add the account you just linked, then import again")
+
 // StartAuth begins the authorization-code flow and returns the URL to send the
 // browser to. The returned state is remembered and must come back unchanged;
 // without that check anyone who can reach this machine could hand the callback
@@ -258,6 +267,8 @@ func (s *Spotify) get(ctx context.Context, path string, out any) error {
 		return &RetryableError{After: retryAfter(resp), Status: resp.StatusCode}
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrNotAuthorized
+	case resp.StatusCode == http.StatusForbidden:
+		return ErrForbidden
 	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("spotify: status %d", resp.StatusCode)
 	}
