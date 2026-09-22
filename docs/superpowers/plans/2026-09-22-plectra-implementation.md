@@ -16,7 +16,7 @@ bila logikanya rusak.
 |---|---|---|
 | v0.1 | musiknya bunyi | **Selesai** (2026-09-22) |
 | v0.2 | enak dipakai | **Selesai** (2026-09-22) |
-| v0.3 | metadata rapi | Belum |
+| v0.3 | metadata rapi | **Selesai** (2026-09-22) |
 | v0.4 | riwayat mendengarkan | Belum |
 | v0.5 | remote dari HP | Belum |
 | v0.6 | tampilan vintage | Belum — dijalankan **setelah** v0.3–v0.5 tuntas |
@@ -107,12 +107,37 @@ antrian kembali. ✅
 
 ---
 
-## v0.3 — metadata rapi
+## v0.3 — metadata rapi — SELESAI
 
-MusicBrainz provider (rate limit 1 req/detik, dihormati lewat clock yang bisa
-di-fake), tabel `enrich_jobs` + worker backoff, cache cover art dari provider,
-OAuth Spotify, enrichment Spotify, import playlist & liked songs dengan pencocokan
-ke library lokal. Scanning tetap tidak boleh menunggu enrichment.
+| Bagian | Hasil |
+|---|---|
+| `enrich_jobs` | tabel + backoff eksponensial, `Retry-After` dihormati, parkir jadi `failed` setelah 5 percobaan |
+| `metadata` | interface `Provider` + `Clock` yang bisa di-fake; limiter 1 req/detik untuk MusicBrainz |
+| MusicBrainz | cari artist/release-group/recording, input di-escape dari sintaks Lucene, User-Agent wajib |
+| Cover art | diunduh dari Cover Art Archive / Spotify ke cache disk, path disimpan di `albums.cover_path` |
+| Spotify | OAuth authorization code, token di DB (tahan restart), refresh otomatis, gagal refresh = provider mati tanpa retry beruntun |
+| Import | playlist + liked songs dicocokkan ke library lokal; yang tak cocok dilaporkan, bukan disembunyikan |
+| API | `GET/POST /api/enrich`, `/api/spotify/login`, `/callback`, `/import`; tanpa kredensial menjawab 503 dengan alasan |
+| UI | tab Settings: status antrian, tombol enrich / re-enrich, connect & import Spotify |
+
+Keputusan yang diambil saat implementasi:
+
+- **Match di bawah skor 70 dibuang.** Jawaban salah yang percaya diri lebih buruk
+  daripada tidak ada jawaban.
+- **`EnqueueJob` tidak pernah menghidupkan job yang sudah `done`** — kalau tidak,
+  setiap start ulang akan menghajar provider lagi. Re-enrichment lewat `ResetJobs`
+  (`POST /api/enrich?force=1`).
+- **Pencocokan import melipat diakritik** (`golang.org/x/text/unicode/norm`) selain
+  case dan tanda baca; tanpa itu "Sigur Rós" tidak pernah cocok dengan "Sigur Ros".
+  Ini satu-satunya dependency baru di milestone ini.
+- Provider yang tidak dikonfigurasi = absen, bukan error: MusicBrainz jalan sendiri
+  tanpa Spotify.
+
+Bukti: test unit dengan clock palsu (rate limit, backoff, `Retry-After`, job parkir,
+match kuat vs lemah, refresh token, pencocokan import) plus uji **live** ke
+MusicBrainz — file bertag `Massive Attack / Mezzanine / Teardrop` menghasilkan MBID
+album `6f9f6899…`, MBID artis `10adbe5e…`, tahun 1998, dan cover art 67KB terunduh
+lalu disajikan `GET /api/cover/1` sebagai `image/jpeg`.
 
 ## v0.4 — riwayat mendengarkan
 

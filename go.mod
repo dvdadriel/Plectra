@@ -9,6 +9,7 @@ require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/mewkiz/flac v1.0.14
+	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.59.0
 )
 

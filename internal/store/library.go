@@ -364,3 +364,12 @@ func (s *Store) AlbumCover(ctx context.Context, albumID int64) (string, error) {
 	}
 	return cover.String, nil
 }
+
+// AllTracks is used to build match indexes for imports.
+func (s *Store) AllTracks(ctx context.Context) ([]Track, error) {
+	rows, err := s.db.QueryContext(ctx, trackSelect)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanTracks(rows)
+}

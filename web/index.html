@@ -45,6 +45,7 @@
     <button data-view="playlists">Playlists</button>
     <button data-view="likes">Likes</button>
     <button data-view="queue">Queue</button>
+    <button data-view="settings">Settings</button>
   </nav>
   <input id="q" type="search" placeholder="Search…" autocomplete="off">
 </header>
@@ -112,6 +113,22 @@ async function render() {
            <button class="icon" data-delpl="${p.id}">✕</button></li>`).join('') + '</ul>'
       : '<p class="empty">No playlists yet.</p>');
   }
+  if (view === 'settings') {
+    let stats = null;
+    try { stats = await (await fetch('/api/enrich')).json(); } catch {}
+    return m.innerHTML = `
+      <h2>Metadata</h2>
+      ${stats ? `<p class="sub">${stats.pending} pending · ${stats.done} done · ${stats.failed} failed</p>
+        <button id="enrich">Run enrichment</button>
+        <button id="reenrich">Re-run everything</button>`
+      : '<p class="empty">Enrichment is off (started with -enrich=false).</p>'}
+      <h2>Spotify</h2>
+      <p class="sub">Metadata and migration only — Spotify never provides audio.</p>
+      <a href="/api/spotify/login"><button>Connect account</button></a>
+      <button id="imp-pl">Import playlists</button>
+      <button id="imp-liked">Import liked songs</button>
+      <div id="impresult" class="sub"></div>`;
+  }
   if (view === 'search') {
     const r = await get('/search?q=' + encodeURIComponent($('#q').value));
     return m.innerHTML =
@@ -149,6 +166,21 @@ $('#main').addEventListener('click', async e => {
   }
   const delpl = e.target.closest('[data-delpl]');
   if (delpl) { await del('/playlists/' + delpl.dataset.delpl); return render(); }
+  if (e.target.id === 'enrich' || e.target.id === 'reenrich') {
+    const force = e.target.id === 'reenrich' ? '?force=1' : '';
+    const r = await (await fetch('/api/enrich' + force, {method:'POST'})).json();
+    return $('#main').querySelector('.sub').textContent = `${r.queued} jobs queued — this runs in the background.`;
+  }
+  if (e.target.id === 'imp-pl' || e.target.id === 'imp-liked') {
+    const what = e.target.id === 'imp-liked' ? 'liked' : 'playlists';
+    $('#impresult').textContent = 'Importing…';
+    const resp = await fetch('/api/spotify/import?what=' + what, {method:'POST'});
+    if (!resp.ok) return $('#impresult').textContent = await resp.text();
+    const r = await resp.json();
+    return $('#impresult').textContent =
+      `${r.matched} tracks matched${r.playlists ? ', ' + r.playlists + ' playlists' : ''}` +
+      (r.unmatched?.length ? ` · ${r.unmatched.length} not in your library` : '');
+  }
   if (e.target.id === 'newpl') {
     const name = prompt('Playlist name');
     if (name) { await post('/playlists', {name}); render(); }

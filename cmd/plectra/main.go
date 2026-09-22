@@ -19,6 +19,7 @@ import (
 	"github.com/plectra/plectra/internal/catalog"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
+	"github.com/plectra/plectra/internal/metadata"
 	"github.com/plectra/plectra/internal/player"
 	"github.com/plectra/plectra/internal/playlist"
 	"github.com/plectra/plectra/internal/store"
@@ -32,6 +33,9 @@ func main() {
 	dbPath := flag.String("db", filepath.Join(dataDir, "plectra.db"), "database file")
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
+	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz and Spotify")
+	spotifyID := flag.String("spotify-id", os.Getenv("SPOTIFY_CLIENT_ID"), "Spotify client id (optional)")
+	spotifySecret := flag.String("spotify-secret", os.Getenv("SPOTIFY_CLIENT_SECRET"), "Spotify client secret (optional)")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
 	watch := flag.Bool("watch", true, "watch the library directory for changes")
 	flag.Parse()
@@ -85,6 +89,27 @@ func main() {
 		log.Fatal(err)
 	}
 	api := native.New(catalog.New(st), playlist.New(st), pl, assets)
+
+	// Metadata is optional at every level: no network, no credentials, or a dead
+	// provider all degrade a feature and never touch playback.
+	if *enrich {
+		providers := []metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}
+		var link native.SpotifyLink
+		if *spotifyID != "" && *spotifySecret != "" {
+			sp := metadata.NewSpotify(st, *spotifyID, *spotifySecret,
+				"http://"+*addr+"/api/spotify/callback", metadata.SystemClock)
+			providers = append(providers, sp)
+			link = sp
+		}
+		worker := metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
+		api = api.WithMetadata(worker, link)
+		go func() {
+			if _, err := worker.Seed(ctx); err != nil {
+				log.Printf("enrich seed: %v", err)
+			}
+			worker.Run(ctx)
+		}()
+	}
 
 	srv := &http.Server{Addr: *addr, Handler: api.Handler()}
 	go func() {

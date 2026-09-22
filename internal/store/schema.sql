@@ -120,3 +120,26 @@ CREATE TRIGGER IF NOT EXISTS tracks_fts_upd AFTER UPDATE ON tracks BEGIN
             (SELECT name FROM artists WHERE id = new.artist_id),
             (SELECT title FROM albums  WHERE id = new.album_id));
 END;
+
+-- enrich_jobs is a table, not an in-memory queue: a Plectra that dies mid-run
+-- resumes where it stopped.
+CREATE TABLE IF NOT EXISTS enrich_jobs (
+    id          INTEGER PRIMARY KEY,
+    entity_type TEXT NOT NULL,              -- 'album' | 'artist' | 'track'
+    entity_id   INTEGER NOT NULL,
+    provider    TEXT NOT NULL,              -- 'musicbrainz' | 'spotify'
+    state       TEXT NOT NULL DEFAULT 'pending', -- pending | done | failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    next_run_at INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (entity_type, entity_id, provider)
+);
+CREATE INDEX IF NOT EXISTS enrich_due ON enrich_jobs(state, next_run_at);
+
+-- Spotify tokens live in the database so a restart does not force a re-login.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    provider      TEXT PRIMARY KEY,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    INTEGER NOT NULL
+);

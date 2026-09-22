@@ -16,14 +16,23 @@ import (
 )
 
 type API struct {
-	cat   *catalog.Catalog
-	pl    *player.Player
-	lists *playlist.Service
-	web   fs.FS
+	cat     *catalog.Catalog
+	pl      *player.Player
+	lists   *playlist.Service
+	enrich  Enricher    // nil when no metadata provider is configured
+	spotify SpotifyLink // nil when Spotify credentials are absent
+	web     fs.FS
 }
 
 func New(cat *catalog.Catalog, lists *playlist.Service, pl *player.Player, web fs.FS) *API {
 	return &API{cat: cat, lists: lists, pl: pl, web: web}
+}
+
+// WithMetadata attaches the optional enrichment and Spotify routes. Both are
+// allowed to be absent: metadata is never required for playback.
+func (a *API) WithMetadata(e Enricher, s SpotifyLink) *API {
+	a.enrich, a.spotify = e, s
+	return a
 }
 
 func (a *API) Handler() http.Handler {
@@ -58,6 +67,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/player/mode", a.mode)
 	mux.HandleFunc("GET /api/player/queue", a.queue)
 	mux.HandleFunc("GET /api/events", a.events)
+
+	a.enrichRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux
