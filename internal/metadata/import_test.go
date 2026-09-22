@@ -12,35 +12,6 @@ import (
 	"github.com/plectra/plectra/internal/store"
 )
 
-func TestMatchKeyIgnoresSpellingNoise(t *testing.T) {
-	same := [][2]string{
-		{"Massive Attack|Teardrop", "massive attack|Teardrop (Remastered 2011)"},
-		{"Queen|Under Pressure", "QUEEN|Under Pressure - Live"},
-		{"Sigur Rós|Hoppípolla", "sigur ros|Hoppipolla"}, // diacritics must fold away
-		{"AC/DC|Back In Black", "ACDC|Back in Black [Bonus Track]"},
-	}
-	for _, pair := range same {
-		a := matchKey(split(pair[0]))
-		b := matchKey(split(pair[1]))
-		if a != b {
-			t.Errorf("%q and %q did not match: %q vs %q", pair[0], pair[1], a, b)
-		}
-	}
-	// Different songs must not collide.
-	if matchKey("Queen", "Bohemian Rhapsody") == matchKey("Queen", "Under Pressure") {
-		t.Error("different titles produced the same key")
-	}
-}
-
-func split(s string) (string, string) {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '|' {
-			return s[:i], s[i+1:]
-		}
-	}
-	return s, ""
-}
-
 func TestImportLikedMatchesLocalLibraryAndReportsMisses(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

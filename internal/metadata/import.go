@@ -2,10 +2,8 @@ package metadata
 
 import (
 	"context"
-	"strings"
-	"unicode"
 
-	"golang.org/x/text/unicode/norm"
+	"github.com/plectra/plectra/internal/match"
 )
 
 // ImportResult says what an import did. Unmatched entries are reported rather
@@ -146,47 +144,16 @@ func (s *Spotify) buildIndex(ctx context.Context) (*trackIndex, error) {
 	}
 	idx := &trackIndex{byKey: make(map[string]int64, len(tracks))}
 	for _, t := range tracks {
-		idx.byKey[matchKey(t.Artist, t.Title)] = t.ID
+		idx.byKey[match.Key(t.Artist, t.Title)] = t.ID
 	}
 	return idx, nil
 }
 
 func (i *trackIndex) find(t spotifyTrack) (int64, bool) {
 	for _, a := range t.Artists {
-		if id, ok := i.byKey[matchKey(a.Name, t.Name)]; ok {
+		if id, ok := i.byKey[match.Key(a.Name, t.Name)]; ok {
 			return id, true
 		}
 	}
 	return 0, false
-}
-
-// matchKey strips everything that varies between two spellings of the same song:
-// case, punctuation, spacing, and the parenthetical suffixes labels love adding.
-func matchKey(artist, title string) string {
-	return normalize(artist) + "\x00" + normalize(stripSuffix(title))
-}
-
-// normalize folds case, strips punctuation and spacing, and removes diacritics,
-// so "Sigur Rós" and "sigur ros" are the same artist — which they are.
-func normalize(s string) string {
-	var b strings.Builder
-	for _, r := range norm.NFD.String(strings.ToLower(s)) {
-		if unicode.Is(unicode.Mn, r) {
-			continue // combining accent left over by the decomposition
-		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// stripSuffix drops "(Remastered 2011)", "- Live", "[Bonus Track]" and friends.
-func stripSuffix(title string) string {
-	for _, cut := range []string{" (", " [", " - "} {
-		if i := strings.Index(title, cut); i > 0 {
-			title = title[:i]
-		}
-	}
-	return title
 }
