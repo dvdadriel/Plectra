@@ -2,6 +2,7 @@ package player
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -195,4 +196,74 @@ func TestRemoveAndClearKeepTheQueueHonest(t *testing.T) {
 		st := p.State()
 		return len(st.Queue) == 0 && !st.Playing && st.Index == -1
 	})
+}
+
+func TestPrevOnFirstTrackRestartsInsteadOfEmptyingTheQueue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.wav")
+	writeWAV(t, path, 4000)
+	q := []store.Track{{ID: 1, Path: path, Title: "a", DurationMS: 4000}}
+
+	p := New(&fakeSink{})
+	p.Play(q, 0)
+	waitFor(t, "playback", func() bool { return p.State().Playing })
+
+	p.Prev()
+	waitFor(t, "prev to settle", func() bool { return p.State().Index == 0 })
+	if st := p.State(); len(st.Queue) != 1 || st.Index != 0 {
+		t.Fatalf("after prev on the first track: index %d, queue %d — want index 0 with the queue intact",
+			st.Index, len(st.Queue))
+	}
+}
+
+func TestNextPastTheEndKeepsTheQueue(t *testing.T) {
+	dir := t.TempDir()
+	var q []store.Track
+	for i, name := range []string{"a.wav", "b.wav"} {
+		path := filepath.Join(dir, name)
+		writeWAV(t, path, 4000)
+		q = append(q, store.Track{ID: int64(i + 1), Path: path, Title: name, DurationMS: 4000})
+	}
+
+	p := New(&fakeSink{})
+	p.Play(q, 1) // already on the last track
+	waitFor(t, "playback", func() bool { return p.State().Playing })
+
+	p.Next()
+	waitFor(t, "next to settle", func() bool { return !p.State().Playing })
+	st := p.State()
+	if len(st.Queue) != 2 || st.Index != 1 {
+		t.Fatalf("after next past the end: index %d, queue %d — want index 1 with the queue intact",
+			st.Index, len(st.Queue))
+	}
+
+	// And it must be possible to start again from there.
+	p.Resume()
+	waitFor(t, "resume", func() bool { return p.State().Playing })
+}
+
+// A run of unreadable files used to re-enter gapless() with a nil decoder and
+// crash the process. Playback must simply stop.
+func TestQueueOfBrokenFilesStopsWithoutCrashing(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.wav")
+	writeWAV(t, good, 150)
+
+	q := []store.Track{{ID: 1, Path: good, Title: "good", DurationMS: 150}}
+	for i := 0; i < 3; i++ {
+		bad := filepath.Join(dir, fmt.Sprintf("bad%d.wav", i))
+		if err := os.WriteFile(bad, []byte("not audio"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		q = append(q, store.Track{ID: int64(i + 2), Path: bad, Title: "bad"})
+	}
+
+	p := New(&fakeSink{})
+	p.Play(q, 0)
+	waitFor(t, "playback to stop after the broken run", func() bool { return !p.State().Playing })
+
+	// The engine must still answer: a panicked goroutine would hang this call.
+	if st := p.State(); len(st.Queue) != 4 {
+		t.Fatalf("queue = %d, want 4", len(st.Queue))
+	}
 }

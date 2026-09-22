@@ -216,10 +216,13 @@ func (p *Player) handle(c command) {
 			p.playing = true
 		}
 	case "next":
-		p.openAt(p.index+1, 0)
+		p.skipTo(p.index + 1)
 	case "prev":
-		if p.positionMS() > 3000 {
-			p.openAt(p.index, 0)
+		// Past three seconds, or already on the first track, previous restarts
+		// what is playing. It must never step off the front of the queue and
+		// leave the player pointing at nothing.
+		if p.positionMS() > 3000 || p.index <= 0 {
+			p.openAt(max(p.index, 0), 0)
 		} else {
 			p.openAt(p.index-1, 0)
 		}
@@ -239,6 +242,25 @@ func (p *Player) handle(c command) {
 func (p *Player) emitState() {
 	s := p.snapshot()
 	p.emit(Event{Type: "state", State: &s})
+}
+
+// skipTo moves forward through the queue: wrapping when repeat is on, and
+// stopping on the last track otherwise — never emptying a queue that still has
+// tracks in it.
+func (p *Player) skipTo(index int) {
+	if len(p.queue) == 0 {
+		p.openAt(-1, 0)
+		return
+	}
+	switch {
+	case index < len(p.queue):
+		p.openAt(index, 0)
+	case p.repeat == "all":
+		p.openAt(0, 0)
+	default:
+		p.openAt(len(p.queue)-1, 0)
+		p.playing = false // parked at the start of the last track, ready to resume
+	}
 }
 
 // openAt starts index at offsetMS, discarding whatever is buffered.
@@ -345,32 +367,48 @@ func (p *Player) pump() {
 
 // gapless opens the next track and keeps writing into the same open device.
 func (p *Player) gapless() {
-	p.dec.Close()
-	p.dec = nil
-
-	next := p.index + 1
-	if p.repeat == "one" {
-		next = p.index
-	} else if next >= len(p.queue) {
-		if p.repeat != "all" {
-			// Keep playing until the ring has actually drained; the last ~500ms
-			// of audio is still queued in the sink.
-			p.drainTo = p.pushed
-			return
-		}
-		next = 0
+	if p.dec != nil {
+		p.dec.Close()
+		p.dec = nil
 	}
-	d, err := audio.Open(p.queue[next].Path)
-	if err != nil {
-		p.emit(Event{Type: "error", Message: err.Error()})
-		p.index = next
-		p.gapless() // skip the bad file, keep going
+	if len(p.queue) == 0 {
+		p.playing = false
+		p.emitState()
 		return
 	}
-	p.dec = d
-	// The old track is still in the ring; the position flips to the new track
-	// only once the sink has actually consumed up to this frame.
-	p.switches = append(p.switches, switchPoint{atFrame: p.pushed, index: next})
+
+	// Loop rather than recurse: a run of unreadable files used to re-enter this
+	// function with a nil decoder, which dereferenced nil and took the process
+	// with it. Every candidate gets one try, then playback stops.
+	for tries := 0; tries < len(p.queue); tries++ {
+		next := p.index + 1
+		if p.repeat == "one" {
+			next = p.index
+		} else if next >= len(p.queue) {
+			if p.repeat != "all" {
+				// Keep playing until the ring has actually drained; the last
+				// ~500ms of audio is still queued in the sink.
+				p.drainTo = p.pushed
+				return
+			}
+			next = 0
+		}
+
+		d, err := audio.Open(p.queue[next].Path)
+		if err != nil {
+			p.emit(Event{Type: "error", Message: err.Error()})
+			p.index = next // skip the bad file and try the one after it
+			continue
+		}
+		p.dec = d
+		// The old track is still in the ring; the position flips to the new track
+		// only once the sink has actually consumed up to this frame.
+		p.switches = append(p.switches, switchPoint{atFrame: p.pushed, index: next})
+		return
+	}
+
+	p.playing = false
+	p.emitState()
 }
 
 func (p *Player) advanceSwitches() {

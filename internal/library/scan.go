@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dhowden/tag"
 	"github.com/plectra/plectra/internal/audio"
@@ -140,7 +142,7 @@ func (s *Scanner) scanFile(ctx context.Context, path string) error {
 		if v := strings.TrimSpace(md.Album()); v != "" {
 			t.Album = v
 		}
-		t.Year = md.Year()
+		t.Year = yearFrom(md.Year(), md.Raw())
 		t.TrackNo, _ = md.Track()
 		if d, _ := md.Disc(); d > 0 {
 			t.DiscNo = d
@@ -164,6 +166,31 @@ func (s *Scanner) scanFile(ctx context.Context, path string) error {
 }
 
 const hashWindow = 64 * 1024
+
+// yearFrom salvages a release year from tag data that real files actually carry.
+// A Vorbis DATE of "2014-11-19T16:15:12" makes the tag library report year 1, and
+// storing that would put "· 1" next to an album forever.
+func yearFrom(year int, raw map[string]any) int {
+	if plausibleYear(year) {
+		return year
+	}
+	for _, key := range []string{"date", "year", "originaldate", "TDRC", "TYER"} {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		text := fmt.Sprint(v)
+		if len(text) < 4 {
+			continue
+		}
+		if n, err := strconv.Atoi(text[:4]); err == nil && plausibleYear(n) {
+			return n
+		}
+	}
+	return 0
+}
+
+func plausibleYear(y int) bool { return y >= 1000 && y <= time.Now().Year()+1 }
 
 // quickHash identifies a file by size, mtime and a window from each end of it:
 // cheap enough to run on every file, stable enough that a move or rename keeps

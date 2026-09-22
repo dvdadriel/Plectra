@@ -201,3 +201,28 @@ func writeWAVBody(t *testing.T, path string, data []byte) {
 		t.Fatal(err)
 	}
 }
+
+func TestYearFromRealTagShapes(t *testing.T) {
+	now := time.Now().Year()
+	cases := []struct {
+		name string
+		year int
+		raw  map[string]any
+		want int
+	}{
+		{"plain year", 1998, nil, 1998},
+		// What a real Vorbis file carries: a full timestamp the tag library
+		// reduces to 1.
+		{"timestamp date", 1, map[string]any{"date": "2014-11-19T16:15:12"}, 2014},
+		{"date only", 0, map[string]any{"date": "1973-03-01"}, 1973},
+		{"id3 frame", 0, map[string]any{"TDRC": "1969"}, 1969},
+		{"garbage", 1, map[string]any{"date": "not a date"}, 0},
+		{"absent", 0, nil, 0},
+		{"absurd future", now + 50, nil, 0},
+	}
+	for _, c := range cases {
+		if got := yearFrom(c.year, c.raw); got != c.want {
+			t.Errorf("%s: yearFrom(%d, %v) = %d, want %d", c.name, c.year, c.raw, got, c.want)
+		}
+	}
+}
