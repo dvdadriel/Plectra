@@ -374,3 +374,56 @@ func (s *Store) AllTracks(ctx context.Context) ([]Track, error) {
 	}
 	return s.scanTracks(rows)
 }
+
+// AlbumsByArtist lists an artist's albums, newest first.
+func (s *Store) AlbumsByArtist(ctx context.Context, artistID int64) ([]Album, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+		 FROM albums al JOIN artists ar ON ar.id = al.artist_id
+		 WHERE al.artist_id = ? ORDER BY al.year DESC, al.title`, artistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Album{}
+	for rows.Next() {
+		var a Album
+		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// Album is a single album by id.
+func (s *Store) Album(ctx context.Context, id int64) (Album, error) {
+	var a Album
+	err := s.db.QueryRowContext(ctx,
+		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+		 FROM albums al JOIN artists ar ON ar.id = al.artist_id WHERE al.id = ?`, id).
+		Scan(&a.ID, &a.Title, &a.Artist, &a.Year)
+	if err == sql.ErrNoRows {
+		return a, ErrNotFound
+	}
+	return a, err
+}
+
+// ArtistAlbumCounts reports how many albums each artist has, for browse views.
+func (s *Store) ArtistAlbumCounts(ctx context.Context) (map[int64]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT artist_id, COUNT(*) FROM albums GROUP BY artist_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

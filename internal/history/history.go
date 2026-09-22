@@ -113,3 +113,33 @@ func (r *Recorder) flush(ctx context.Context) {
 		}
 	}
 }
+
+// RecordPlay stores a listen reported by a third-party client. A "now playing"
+// notification (submission=false) is not a listen and is deliberately dropped.
+func (r *Recorder) RecordPlay(ctx context.Context, trackID int64, submission bool) error {
+	if !submission {
+		return nil
+	}
+	tracks, err := r.st.TracksByIDs(ctx, []int64{trackID})
+	if err != nil {
+		return err
+	}
+	if len(tracks) == 0 {
+		return store.ErrNotFound
+	}
+	t := tracks[0]
+	p := store.Play{
+		TrackID: t.ID, PlayedAt: time.Now().Unix(), MSPlayed: t.DurationMS,
+		Completed: true, Source: SourcePlectra,
+		RawArtist: t.Artist, RawAlbum: t.Album, RawTitle: t.Title,
+	}
+	if err := r.st.AddPlay(ctx, p); err != nil {
+		return err
+	}
+	if r.scrobbler != nil {
+		if err := r.scrobbler.Scrobble(ctx, p); err != nil {
+			log.Printf("scrobble: %v", err)
+		}
+	}
+	return nil
+}

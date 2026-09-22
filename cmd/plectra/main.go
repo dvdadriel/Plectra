@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/plectra/plectra/internal/api/native"
+	"github.com/plectra/plectra/internal/api/subsonic"
 	"github.com/plectra/plectra/internal/catalog"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
@@ -37,6 +38,8 @@ func main() {
 	spotifyID := flag.String("spotify-id", os.Getenv("SPOTIFY_CLIENT_ID"), "Spotify client id (optional)")
 	spotifySecret := flag.String("spotify-secret", os.Getenv("SPOTIFY_CLIENT_SECRET"), "Spotify client secret (optional)")
 	lbToken := flag.String("listenbrainz-token", os.Getenv("LISTENBRAINZ_TOKEN"), "ListenBrainz token, to scrobble plays (optional)")
+	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
+	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
 	watch := flag.Bool("watch", true, "watch the library directory for changes")
 	flag.Parse()
@@ -120,7 +123,22 @@ func main() {
 		}()
 	}
 
-	srv := &http.Server{Addr: *addr, Handler: api.Handler()}
+	handler := api.Handler()
+
+	// OpenSubsonic is the one surface reachable from other devices, so it stays
+	// off until a password is set.
+	sub := subsonic.New(catalog.New(st), playlist.New(st), pl, recorder, *subUser, *subPass)
+	if sub.Enabled() {
+		mux := http.NewServeMux()
+		mux.Handle("/rest/", sub.Handler())
+		mux.Handle("/", handler)
+		handler = mux
+		log.Printf("opensubsonic enabled at http://%s/rest as user %q", *addr, *subUser)
+	} else {
+		log.Printf("opensubsonic disabled: set -subsonic-password to enable it")
+	}
+
+	srv := &http.Server{Addr: *addr, Handler: handler}
 	go func() {
 		<-ctx.Done()
 		saveState(st, pl)

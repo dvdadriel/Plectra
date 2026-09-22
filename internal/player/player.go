@@ -123,6 +123,13 @@ func (p *Player) SetMode(shuffle bool, repeat string) {
 }
 func (p *Player) Enqueue(q []store.Track) { p.send(command{kind: "enqueue", queue: q}) }
 
+// Clear empties the queue and stops playback.
+func (p *Player) Clear() { p.send(command{kind: "clear"}) }
+
+// Remove drops one entry from the queue. Removing what is playing moves on to
+// the next track rather than leaving the player pointing at nothing.
+func (p *Player) Remove(index int) { p.send(command{kind: "remove", index: index}) }
+
 // Restore loads a saved queue without starting playback: after a restart the
 // music waits for the user, it does not ambush them.
 func (p *Player) Restore(q []store.Track, index int, positionMS int64, volume float64, shuffle bool, repeat string) {
@@ -197,6 +204,11 @@ func (p *Player) handle(c command) {
 		p.playing = false // restored paused
 	case "enqueue":
 		p.queue = append(p.queue, c.queue...)
+	case "clear":
+		p.queue = nil
+		p.openAt(-1, 0)
+	case "remove":
+		p.removeAt(c.index)
 	case "pause":
 		p.playing = false
 	case "resume":
@@ -374,6 +386,25 @@ func (p *Player) advanceSwitches() {
 		p.trackOff = 0
 		p.switches = p.switches[1:]
 		p.emitState()
+	}
+}
+
+// removeAt drops a queue entry, keeping the current track playing unless it is
+// the one being removed.
+func (p *Player) removeAt(index int) {
+	if index < 0 || index >= len(p.queue) {
+		return
+	}
+	current := p.index
+	p.queue = append(p.queue[:index:index], p.queue[index+1:]...)
+	switch {
+	case index > current:
+		// Nothing playing changes.
+	case index < current:
+		p.index--
+		// The decoder keeps running; only the index shifts.
+	default:
+		p.openAt(index, 0) // what was playing is gone; the next track takes its place
 	}
 }
 

@@ -162,3 +162,37 @@ func TestRingWrapsWithoutLosingSamples(t *testing.T) {
 		t.Fatalf("after wrap got %v", got)
 	}
 }
+
+func TestRemoveAndClearKeepTheQueueHonest(t *testing.T) {
+	dir := t.TempDir()
+	var q []store.Track
+	for i, name := range []string{"a.wav", "b.wav", "c.wav"} {
+		p := filepath.Join(dir, name)
+		writeWAV(t, p, 3000)
+		q = append(q, store.Track{ID: int64(i + 1), Path: p, Title: name, DurationMS: 3000})
+	}
+
+	p := New(&fakeSink{})
+	p.Play(q, 1) // playing "b"
+	waitFor(t, "playback to start", func() bool { return p.State().Playing })
+
+	// Removing an earlier entry shifts the index but keeps the same track playing.
+	p.Remove(0)
+	waitFor(t, "index to shift", func() bool { return p.State().Index == 0 })
+	if got := p.State().Queue[0].Title; got != "b.wav" {
+		t.Fatalf("playing %q after removing an earlier track, want b.wav", got)
+	}
+
+	// Removing what is playing moves on to the next track.
+	p.Remove(0)
+	waitFor(t, "next track", func() bool {
+		st := p.State()
+		return len(st.Queue) == 1 && st.Queue[0].Title == "c.wav"
+	})
+
+	p.Clear()
+	waitFor(t, "queue to empty", func() bool {
+		st := p.State()
+		return len(st.Queue) == 0 && !st.Playing && st.Index == -1
+	})
+}
