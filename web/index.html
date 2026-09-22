@@ -257,7 +257,6 @@ async function settingsPanel() {
   const [enrich, hist, spotify, scan] = await Promise.all([
     get('/enrich'), get('/history'), get('/spotify/status'), get('/library/scan'),
   ]);
-  const sources = hist ? Object.entries(hist.bySource || {}).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
   return `
     <h2>Local music</h2>
     ${scanPanel(scan)}
@@ -373,7 +372,8 @@ async function onMainClick(e) {
     const r = await resp.json();
     $('#impresult').textContent =
       `${r.matched} tracks matched${r.playlists ? ', ' + r.playlists + ' playlists' : ''}` +
-      (r.unmatched?.length ? ` · ${r.unmatched.length} not in your library` : '');
+      (r.unmatched?.length ? ` · ${r.unmatched.length} not in your library` : '') +
+      (r.skipped?.length ? ` · Spotify would not share ${r.skipped.length} of its own playlists (${r.skipped.join(', ')})` : '');
   }
 }
 

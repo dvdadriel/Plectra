@@ -149,3 +149,72 @@ func newTestSpotify(t *testing.T, st *store.Store, base string) *Spotify {
 	sp.BaseURL, sp.AccountsURL = base, base
 	return sp
 }
+
+// Spotify's own playlists — Discover Weekly, Release Radar, editorial lists —
+// are closed to applications registered after 27 November 2024, yet they still
+// appear in the listing. One refusal must not cost the user every playlist they
+// actually own.
+func TestPlaylistSpotifyRefusesIsSkippedNotFatal(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	if _, err := st.UpsertTrack(ctx, store.Track{
+		Title: "Teardrop", Artist: "Massive Attack", Album: "Mezzanine", DiscNo: 1,
+		Path: "/m/teardrop.flac", FileHash: "h1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/me/playlists":
+			json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"id": "editorial", "name": "Discover Weekly"},
+					{"id": "mine", "name": "Road trip"},
+				},
+			})
+		case r.URL.Path == "/playlists/editorial/tracks":
+			http.Error(w, `{"error":{"status":404,"message":"Not found."}}`, http.StatusNotFound)
+		case r.URL.Path == "/playlists/mine/tracks":
+			json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"track": map[string]any{
+						"id": "s1", "name": "Teardrop",
+						"artists": []map[string]string{{"name": "Massive Attack"}},
+					}},
+				},
+			})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	if err := st.SaveToken(ctx, "spotify", store.Token{
+		AccessToken: "t", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sp := newTestSpotify(t, st, srv.URL)
+	res, err := sp.ImportPlaylists(ctx)
+	if err != nil {
+		t.Fatalf("one refused playlist aborted the import: %v", err)
+	}
+	if res.Playlists != 1 || res.Matched != 1 {
+		t.Fatalf("result = %+v, want the one playlist we own", res)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0] != "Discover Weekly" {
+		t.Fatalf("skipped = %v, want Discover Weekly reported", res.Skipped)
+	}
+
+	lists, _ := st.Playlists(ctx)
+	if len(lists) != 1 || lists[0].Name != "Road trip" {
+		t.Fatalf("playlists = %+v, want only the user's own", lists)
+	}
+}

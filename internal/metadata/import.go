@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"log"
 
 	"github.com/plectra/plectra/internal/match"
 )
@@ -12,6 +13,11 @@ type ImportResult struct {
 	Playlists int      `json:"playlists"`
 	Matched   int      `json:"matched"`
 	Unmatched []string `json:"unmatched"`
+	// Skipped names playlists Spotify would not hand over. Since 27 November
+	// 2024 its algorithmic and editorial playlists — Discover Weekly, Release
+	// Radar, and everything Spotify made itself — are closed to applications
+	// registered after that date, even though they still appear in the listing.
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // ImportPlaylists copies the user's Spotify playlists into local ones, keeping
@@ -39,7 +45,12 @@ func (s *Spotify) ImportPlaylists(ctx context.Context) (ImportResult, error) {
 		for _, pl := range page.Items {
 			ids, missing, err := s.playlistTrackIDs(ctx, pl.ID, index)
 			if err != nil {
-				return res, err
+				// One playlist Spotify refuses must not abort the rest of the
+				// import: a single Discover Weekly in the listing would
+				// otherwise cost the user every playlist they do own.
+				log.Printf("spotify: playlist %q: %v", pl.Name, err)
+				res.Skipped = append(res.Skipped, pl.Name)
+				continue
 			}
 			res.Unmatched = append(res.Unmatched, missing...)
 			if len(ids) == 0 {
