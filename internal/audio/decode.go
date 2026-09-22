@@ -31,6 +31,9 @@ type Decoder interface {
 // Open picks a decoder for a track's location: a file on disk, or a network
 // stream when the location is a URL.
 func Open(path string) (Decoder, error) {
+	if strings.HasPrefix(path, FFmpegScheme) {
+		return openFFmpeg(path)
+	}
 	if IsStream(path) {
 		return openStream(path)
 	}
