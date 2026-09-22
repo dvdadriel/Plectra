@@ -26,7 +26,6 @@ type API struct {
 	creds    Credentials // nil when credentials cannot be edited here
 	radio    Radio       // nil when the station directory is unavailable
 	sources  Sources     // nil when no external source is configured
-	spotify  SpotifyLink // nil when Spotify credentials are absent
 	web      fs.FS
 }
 
@@ -34,10 +33,10 @@ func New(cat *catalog.Catalog, lists *playlist.Service, pl *player.Player, web f
 	return &API{cat: cat, lists: lists, pl: pl, web: web}
 }
 
-// WithMetadata attaches the optional enrichment and Spotify routes. Both are
-// allowed to be absent: metadata is never required for playback.
-func (a *API) WithMetadata(e Enricher, s SpotifyLink) *API {
-	a.enrich, a.spotify = e, s
+// WithMetadata attaches the optional enrichment routes. Metadata is never
+// required for playback.
+func (a *API) WithMetadata(e Enricher) *API {
+	a.enrich = e
 	return a
 }
 

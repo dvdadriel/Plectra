@@ -9,13 +9,6 @@ import (
 	"github.com/plectra/plectra/internal/store"
 )
 
-type fakeSpotify struct{ id, secret string }
-
-func (f *fakeSpotify) SetCredentials(id, secret string) { f.id, f.secret = id, secret }
-func (f *fakeSpotify) Configured() bool                 { return f.id != "" && f.secret != "" }
-func (f *fakeSpotify) CredentialsLookValid() bool       { return len(f.id) == 32 }
-func (f *fakeSpotify) Linked(context.Context) bool      { return false }
-
 type fakeLastFM struct{ key string }
 
 func (f *fakeLastFM) SetKey(k string) { f.key = k }
@@ -37,42 +30,37 @@ func (f *fakeScrobbler) ValidateToken(_ context.Context, token string) (string, 
 	return "", errors.New("Token invalid.")
 }
 
-func newManager(t *testing.T) (*Manager, *store.Store, *fakeSpotify, *fakeLastFM, *fakeScrobbler, context.Context) {
+func newManager(t *testing.T) (*Manager, *store.Store, *fakeLastFM, *fakeScrobbler, context.Context) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	sp, lf, sc := &fakeSpotify{}, &fakeLastFM{}, &fakeScrobbler{validFor: "good-token"}
-	return New(st, sp, lf, sc), st, sp, lf, sc, context.Background()
+	lf, sc := &fakeLastFM{}, &fakeScrobbler{validFor: "good-token"}
+	return New(st, lf, sc), st, lf, sc, context.Background()
 }
 
 func TestSavedCredentialsAreAppliedAndSurviveReload(t *testing.T) {
-	m, st, sp, lf, sc, ctx := newManager(t)
+	m, st, lf, sc, ctx := newManager(t)
 
-	id := "0123456789abcdef0123456789abcdef"
-	err := m.Save(ctx, map[string]string{
-		"spotifyClientId":     id,
-		"spotifyClientSecret": "fedcba9876543210fedcba9876543210",
-		"lastfmApiKey":        "lastfm-key",
-		"listenbrainzToken":   "good-token",
-	})
-	if err != nil {
+	if err := m.Save(ctx, map[string]string{
+		"lastfmApiKey":      "lastfm-key",
+		"listenbrainzToken": "good-token",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if !sp.Configured() || lf.Key() != "lastfm-key" || sc.Token() != "good-token" {
-		t.Fatalf("credentials were not applied: spotify=%v lastfm=%q lb=%q",
-			sp.Configured(), lf.Key(), sc.Token())
+	if lf.Key() != "lastfm-key" || sc.Token() != "good-token" {
+		t.Fatalf("not applied: lastfm=%q lb=%q", lf.Key(), sc.Token())
 	}
 
 	// A fresh manager over the same database reapplies them: this is what makes
 	// entering them in the UI survive a restart.
-	sp2, lf2, sc2 := &fakeSpotify{}, &fakeLastFM{}, &fakeScrobbler{validFor: "good-token"}
-	if err := New(st, sp2, lf2, sc2).Load(ctx); err != nil {
+	lf2, sc2 := &fakeLastFM{}, &fakeScrobbler{validFor: "good-token"}
+	if err := New(st, lf2, sc2).Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !sp2.Configured() || lf2.Key() != "lastfm-key" || sc2.Token() != "good-token" {
+	if lf2.Key() != "lastfm-key" || sc2.Token() != "good-token" {
 		t.Fatal("stored credentials were not reapplied on load")
 	}
 }
@@ -80,10 +68,9 @@ func TestSavedCredentialsAreAppliedAndSurviveReload(t *testing.T) {
 // A token is checked before it is stored, so a typo is reported now rather than
 // discovered when a scrobble silently fails months later.
 func TestBadListenBrainzTokenIsRejectedAndNotStored(t *testing.T) {
-	m, st, _, _, sc, ctx := newManager(t)
+	m, st, _, sc, ctx := newManager(t)
 
-	err := m.Save(ctx, map[string]string{"listenbrainzToken": "wrong"})
-	if err == nil {
+	if err := m.Save(ctx, map[string]string{"listenbrainzToken": "wrong"}); err == nil {
 		t.Fatal("a rejected token was accepted")
 	}
 	if stored, _ := st.Setting(ctx, store.KeyListenBrainzToken); stored != "" {
@@ -95,35 +82,35 @@ func TestBadListenBrainzTokenIsRejectedAndNotStored(t *testing.T) {
 }
 
 func TestStatusNeverReturnsTheValues(t *testing.T) {
-	m, _, _, _, _, ctx := newManager(t)
-	secret := "fedcba9876543210fedcba9876543210"
+	m, _, _, _, ctx := newManager(t)
 	if err := m.Save(ctx, map[string]string{
-		"spotifyClientId":     "0123456789abcdef0123456789abcdef",
-		"spotifyClientSecret": secret,
-		"lastfmApiKey":        "lastfm-key",
+		"lastfmApiKey":      "lastfm-key",
+		"listenbrainzToken": "good-token",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	for k, v := range m.Status(ctx) {
-		if s, ok := v.(string); ok && (s == secret || s == "lastfm-key" ||
-			s == "0123456789abcdef0123456789abcdef") {
+	st := m.Status(ctx)
+	for k, v := range st {
+		if s, ok := v.(string); ok && (s == "lastfm-key" || s == "good-token") {
 			t.Fatalf("status leaked a credential in %q", k)
 		}
 	}
-	st := m.Status(ctx)
-	if st["spotifyConfigured"] != true || st["lastfmConfigured"] != true {
+	if st["lastfmConfigured"] != true || st["listenbrainzConfigured"] != true {
 		t.Fatalf("status = %v, want both reported as set", st)
+	}
+	if st["listenbrainzUser"] != "listener" {
+		t.Fatalf("status = %v, want the account name the service reported", st)
 	}
 }
 
-// Clearing one credential must not disturb the others.
+// Clearing one credential must not disturb the other, and must take effect now
+// rather than at the next restart.
 func TestClearingOneCredentialLeavesTheRest(t *testing.T) {
-	m, _, sp, lf, _, ctx := newManager(t)
+	m, _, lf, sc, ctx := newManager(t)
 	if err := m.Save(ctx, map[string]string{
-		"spotifyClientId":     "0123456789abcdef0123456789abcdef",
-		"spotifyClientSecret": "fedcba9876543210fedcba9876543210",
-		"lastfmApiKey":        "lastfm-key",
+		"lastfmApiKey":      "lastfm-key",
+		"listenbrainzToken": "good-token",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +120,7 @@ func TestClearingOneCredentialLeavesTheRest(t *testing.T) {
 	if lf.Key() != "" {
 		t.Fatalf("last.fm key = %q, want cleared", lf.Key())
 	}
-	if !sp.Configured() {
-		t.Fatal("clearing the last.fm key also dropped the Spotify credentials")
+	if sc.Token() != "good-token" {
+		t.Fatal("clearing the last.fm key also dropped the ListenBrainz token")
 	}
 }

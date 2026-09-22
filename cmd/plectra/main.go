@@ -9,7 +9,6 @@ import (
 	"flag"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -46,11 +45,7 @@ func main() {
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
 	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz and Spotify")
-	spotifyID := flag.String("spotify-id", firstEnv("SPOTIFY_CLIENT_ID", "spotify-client-id"), "Spotify client id (optional)")
-	spotifySecret := flag.String("spotify-secret", firstEnv("SPOTIFY_CLIENT_SECRET", "spotify-client-secret"), "Spotify client secret (optional)")
 	lbToken := flag.String("listenbrainz-token", firstEnv("LISTENBRAINZ_TOKEN", "listenbrainz-user-token", "listenbrainz_user_token"), "ListenBrainz token, to scrobble plays (optional)")
-	spotifyRedirect := flag.String("spotify-redirect", "",
-		"OAuth redirect URI registered with Spotify (default http://127.0.0.1:<port>/api/spotify/callback)")
 	lastfmKey := flag.String("lastfm-key", firstEnv("LASTFM_API_KEY", "last-fm-api-key", "lastfm_api_key"), "Last.fm API key, improves recommendations (optional)")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
@@ -119,32 +114,18 @@ func main() {
 		WithHistory(recorder).
 		WithLibrary(scanner)
 
-	// Metadata is optional at every level: no network, no credentials, or a dead
-	// provider all degrade a feature and never touch playback.
-	//
-	// The Spotify provider always exists: its credentials can be entered in the
-	// UI later, and a provider that appears only after a restart cannot be
-	// configured from a browser.
-	redirect := *spotifyRedirect
-	if redirect == "" {
-		redirect = defaultRedirect(*addr)
-	}
-	spotify := metadata.NewSpotify(st, *spotifyID, *spotifySecret, redirect, metadata.SystemClock)
-	log.Printf("spotify: register this exact redirect uri in your app: %s", redirect)
-
-	providers := []metadata.Provider{spotify}
+	// Metadata is optional at every level: no network or a dead provider
+	// degrades a feature and never touches playback.
 	if *enrich {
-		providers = append([]metadata.Provider{metadata.NewMusicBrainz(metadata.SystemClock)}, providers...)
-		worker := metadata.NewWorker(st, *coverDir, metadata.SystemClock, providers...)
-		api = api.WithMetadata(worker, spotify)
+		worker := metadata.NewWorker(st, *coverDir, metadata.SystemClock,
+			metadata.NewMusicBrainz(metadata.SystemClock))
+		api = api.WithMetadata(worker)
 		go func() {
 			if _, err := worker.Seed(ctx); err != nil {
 				log.Printf("enrich seed: %v", err)
 			}
 			worker.Run(ctx)
 		}()
-	} else {
-		api = api.WithMetadata(nil, spotify)
 	}
 
 	// Recommendations rank tracks already in the library, using plays recorded
@@ -154,7 +135,7 @@ func main() {
 	api = api.WithDiscovery(discovery.New(st, discovery.NewListenBrainz(), lastfm))
 
 	// Credentials are editable from Settings and applied without a restart.
-	creds := credentials.New(st, spotify, lastfm, scrobbler)
+	creds := credentials.New(st, lastfm, scrobbler)
 	if err := creds.Load(ctx); err != nil {
 		log.Printf("credentials: %v", err) // stored keys are a convenience, not a requirement
 	}
@@ -229,28 +210,6 @@ func saveState(st *store.Store, pl *player.Player) {
 	if err != nil {
 		log.Printf("save state: %v", err)
 	}
-}
-
-// warnCredential reports a value that cannot be a Spotify credential. It warns
-// rather than refuses: the exact format is Spotify's to change, not ours.
-func warnCredential(flag, value string) {
-	if len(value) != 32 || strings.Trim(value, "0123456789abcdef") != "" {
-		log.Printf("warning: %s does not look like a Spotify credential "+
-			"(expected 32 hex characters, got %d chars) — Spotify will answer INVALID_CLIENT",
-			flag, len(value))
-	}
-}
-
-// defaultRedirect derives the OAuth callback from the listen port, always on the
-// loopback literal address. Spotify refuses plain http for anything else — and
-// refuses the hostname "localhost" too — so deriving it from the bind address
-// would break the moment someone listens on 0.0.0.0 to reach the UI from a phone.
-func defaultRedirect(addr string) string {
-	port := "4533"
-	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
-		port = p
-	}
-	return "http://127.0.0.1:" + port + "/api/spotify/callback"
 }
 
 // firstEnv returns the first of these environment variables that is set, so a

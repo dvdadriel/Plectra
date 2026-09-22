@@ -257,16 +257,6 @@ function credentialsPanel(c) {
       Values are never shown again after saving.</p>
 
     <div class="field">
-      <label for="cred-spotify-id">Spotify client ID ${mark(c.spotifyConfigured)}</label>
-      <input class="path" id="cred-spotify-id" type="password" autocomplete="off"
-             placeholder="32 hex characters from developer.spotify.com">
-    </div>
-    <div class="field">
-      <label for="cred-spotify-secret">Spotify client secret</label>
-      <input class="path" id="cred-spotify-secret" type="password" autocomplete="off"
-             placeholder="32 hex characters">
-    </div>
-    <div class="field">
       <label for="cred-lastfm">Last.fm API key ${mark(c.lastfmConfigured)}</label>
       <input class="path" id="cred-lastfm" type="password" autocomplete="off"
              placeholder="widens recommendations to artists without a MusicBrainz id">
@@ -286,51 +276,10 @@ function credentialsPanel(c) {
     <div id="credresult" class="sub"></div>`;
 }
 
-// The panel says what is actually true: no credentials, credentials but no
-// account, or connected.
-function spotifyPanel(s) {
-  if (!s || !s.configured) {
-    return `<div class="empty">
-      <strong>Spotify is not set up</strong>
-      Start Plectra with your own app credentials:
-      <code>-spotify-id</code> and <code>-spotify-secret</code>, or the
-      <code>SPOTIFY_CLIENT_ID</code> / <code>SPOTIFY_CLIENT_SECRET</code> environment
-      variables. Create the app at developer.spotify.com and register the redirect
-      URI Plectra prints on startup.
-    </div>`;
-  }
-  const connect = s.configured
-    ? `<a href="/api/spotify/login"><button class="action" type="button">${
-        s.linked ? 'Reconnect account' : 'Connect account'}</button></a>`
-    : `<button class="action" type="button" disabled>Connect account</button>
-       <span class="sub">Enter your Spotify client ID and secret under Accounts above first.</span>`;
-
-  const warning = !s.credentialsValid ? `<div class="empty">
-      <strong>Those credentials cannot be right</strong>
-      Spotify client ids and secrets are 32 hex characters. What Plectra was
-      started with is a different shape, so Spotify will answer
-      <code>INVALID_CLIENT</code> instead of a consent screen. Copy both values
-      from your app at developer.spotify.com.
-    </div>` : '';
-
-  if (!s.linked) {
-    return `${warning}<div>${connect}
-      <span class="sub">Opens Spotify to authorise this instance.</span>
-    </div>`;
-  }
-  return `${warning}
-    <p class="sub"><strong>Account connected.</strong> Imports match against your local library.</p>
-    <div>
-      <button class="action" id="imp-pl">Import playlists</button>
-      <button class="action" id="imp-liked">Import liked songs</button>
-      ${connect}
-    </div>`;
-}
 
 async function settingsPanel() {
-  const [enrich, hist, spotify, scan, creds] = await Promise.all([
-    get('/enrich'), get('/history'), get('/spotify/status'), get('/library/scan'),
-    get('/settings/credentials'),
+  const [enrich, hist, scan, creds] = await Promise.all([
+    get('/enrich'), get('/history'), get('/library/scan'), get('/settings/credentials'),
   ]);
   return `
     <h2>Local music</h2>

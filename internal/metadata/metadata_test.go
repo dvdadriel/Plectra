@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -242,104 +241,6 @@ func (s *stubProvider) Lookup(ctx context.Context, q Query) ([]Match, error) {
 	return s.matches, s.err
 }
 
-func TestAuthStateIsRandomAndSingleUse(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-
-	sp := NewSpotify(st, "id", "secret", "http://127.0.0.1:4533/api/spotify/callback", &fakeClock{})
-
-	first := stateOf(t, sp.StartAuth())
-	if first == "" {
-		t.Fatal("no state in the authorize url")
-	}
-	second := stateOf(t, sp.StartAuth())
-	if first == second {
-		t.Fatal("the same state was issued twice; it has to be unguessable per login")
-	}
-
-	// A callback carrying someone else's state is refused.
-	if sp.CheckState(first) {
-		t.Fatal("a stale state was accepted")
-	}
-	if !sp.CheckState(second) {
-		t.Fatal("the state this server issued was rejected")
-	}
-	// And it cannot be replayed.
-	if sp.CheckState(second) {
-		t.Fatal("the same state was accepted twice")
-	}
-	if sp.CheckState("") {
-		t.Fatal("an empty state was accepted")
-	}
-}
-
-func stateOf(t *testing.T, authURL string) string {
-	t.Helper()
-	u, err := url.Parse(authURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return u.Query().Get("state")
-}
-
-func TestLinkedReportsWhetherAnAccountIsConnected(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	ctx := context.Background()
-
-	sp := NewSpotify(st, "id", "secret", "http://127.0.0.1:4533/cb", &fakeClock{})
-	if sp.Linked(ctx) {
-		t.Fatal("reported linked with no token stored")
-	}
-	// An access token with no refresh token cannot outlive the hour: not linked.
-	if err := st.SaveToken(ctx, "spotify", store.Token{AccessToken: "a"}); err != nil {
-		t.Fatal(err)
-	}
-	if sp.Linked(ctx) {
-		t.Fatal("reported linked without a refresh token")
-	}
-	if err := st.SaveToken(ctx, "spotify", store.Token{AccessToken: "a", RefreshToken: "r"}); err != nil {
-		t.Fatal(err)
-	}
-	if !sp.Linked(ctx) {
-		t.Fatal("reported not linked with a full token stored")
-	}
-}
-
-func TestCredentialsLookValidCatchesPlaceholders(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-
-	real := "0123456789abcdef0123456789abcdef" // 32 hex, the shape Spotify issues
-	cases := []struct {
-		id, secret string
-		want       bool
-	}{
-		{real, real, true},
-		{"demo-client-id", "demo-secret", false}, // the placeholder that caused a failed login
-		{real, "short", false},
-		{"", "", false},
-		{real + "f", real, false},                         // too long
-		{"0123456789ABCDEF0123456789ABCDEF", real, false}, // Spotify issues lowercase
-		{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", real, false}, // right length, not hex
-	}
-	for _, c := range cases {
-		sp := NewSpotify(st, c.id, c.secret, "http://127.0.0.1:4533/cb", &fakeClock{})
-		if got := sp.CredentialsLookValid(); got != c.want {
-			t.Errorf("CredentialsLookValid(%q, %q) = %v, want %v", c.id, c.secret, got, c.want)
-		}
-	}
-}
-
 type notReadyProvider struct{ stubProvider }
 
 func (n *notReadyProvider) Ready(context.Context) bool { return false }
@@ -363,38 +264,6 @@ func TestSeedSkipsProvidersThatAreNotReady(t *testing.T) {
 		t.Fatalf("stats = %+v, want an empty queue", stats)
 	}
 	_ = albumID
-}
-
-// An unauthorized provider is parked at once rather than retried with backoff:
-// no amount of waiting authorizes it.
-func TestUnauthorizedJobIsParkedNotRetried(t *testing.T) {
-	st, ctx, albumID := seedLibrary(t)
-	clock := &fakeClock{now: time.Unix(10000, 0)}
-
-	p := &stubProvider{err: ErrNotAuthorized}
-	w := NewWorker(st, t.TempDir(), clock, p)
-	if err := st.EnqueueJob(ctx, string(KindAlbum), albumID, p.Name()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.RunOnce(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := st.JobStats(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Failed != 1 || stats.Pending != 0 {
-		t.Fatalf("stats = %+v, want the job parked as failed after one attempt", stats)
-	}
-	// And it is not retried a day later either.
-	clock.now = clock.now.Add(24 * time.Hour)
-	if jobs, _ := st.DueJobs(ctx, clock.now, 10); len(jobs) != 0 {
-		t.Fatalf("a parked job came back: %+v", jobs)
-	}
-	if p.calls != 1 {
-		t.Fatalf("provider called %d times, want exactly one", p.calls)
-	}
 }
 
 func seedLibrary(t *testing.T) (*store.Store, context.Context, int64) {

@@ -12,14 +12,6 @@ import (
 	"github.com/plectra/plectra/internal/store"
 )
 
-// Spotify is the part of the Spotify provider this package drives.
-type Spotify interface {
-	SetCredentials(id, secret string)
-	Configured() bool
-	CredentialsLookValid() bool
-	Linked(ctx context.Context) bool
-}
-
 // LastFM is the part of the Last.fm provider this package drives.
 type LastFM interface {
 	SetKey(key string)
@@ -36,7 +28,6 @@ type Scrobbler interface {
 
 type Manager struct {
 	st        *store.Store
-	spotify   Spotify
 	lastfm    LastFM
 	scrobbler Scrobbler
 
@@ -45,25 +36,13 @@ type Manager struct {
 	lbUser string
 }
 
-func New(st *store.Store, sp Spotify, lf LastFM, sc Scrobbler) *Manager {
-	return &Manager{st: st, spotify: sp, lastfm: lf, scrobbler: sc}
+func New(st *store.Store, lf LastFM, sc Scrobbler) *Manager {
+	return &Manager{st: st, lastfm: lf, scrobbler: sc}
 }
 
 // Load applies whatever is already stored. Values passed on the command line
 // stay in force for anything the database does not override.
 func (m *Manager) Load(ctx context.Context) error {
-	id, err := m.st.Setting(ctx, store.KeySpotifyClientID)
-	if err != nil {
-		return err
-	}
-	secret, err := m.st.Setting(ctx, store.KeySpotifyClientSecret)
-	if err != nil {
-		return err
-	}
-	if m.spotify != nil && id != "" && secret != "" {
-		m.spotify.SetCredentials(id, secret)
-	}
-
 	if key, err := m.st.Setting(ctx, store.KeyLastFMAPIKey); err != nil {
 		return err
 	} else if m.lastfm != nil && key != "" {
@@ -95,26 +74,6 @@ func (m *Manager) Load(ctx context.Context) error {
 // applied as given — including an empty one, which clears that credential now
 // rather than at the next restart.
 func (m *Manager) Save(ctx context.Context, values map[string]string) error {
-	id, haveID := values["spotifyClientId"]
-	secret, haveSecret := values["spotifyClientSecret"]
-	if haveID || haveSecret {
-		if !haveID {
-			id, _ = m.st.Setting(ctx, store.KeySpotifyClientID)
-		}
-		if !haveSecret {
-			secret, _ = m.st.Setting(ctx, store.KeySpotifyClientSecret)
-		}
-		if err := m.st.SetSetting(ctx, store.KeySpotifyClientID, id); err != nil {
-			return err
-		}
-		if err := m.st.SetSetting(ctx, store.KeySpotifyClientSecret, secret); err != nil {
-			return err
-		}
-		if m.spotify != nil {
-			m.spotify.SetCredentials(id, secret)
-		}
-	}
-
 	if key, ok := values["lastfmApiKey"]; ok {
 		if err := m.st.SetSetting(ctx, store.KeyLastFMAPIKey, key); err != nil {
 			return err
@@ -148,11 +107,6 @@ func (m *Manager) Save(ctx context.Context, values map[string]string) error {
 // Status says what is set, never what it is set to.
 func (m *Manager) Status(ctx context.Context) map[string]any {
 	out := map[string]any{}
-	if m.spotify != nil {
-		out["spotifyConfigured"] = m.spotify.Configured()
-		out["spotifyCredentialsValid"] = m.spotify.CredentialsLookValid()
-		out["spotifyLinked"] = m.spotify.Linked(ctx)
-	}
 	if m.lastfm != nil {
 		out["lastfmConfigured"] = m.lastfm.Key() != ""
 	}

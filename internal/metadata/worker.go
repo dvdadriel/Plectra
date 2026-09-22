@@ -143,15 +143,6 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 
 // reschedule applies exponential backoff, or the provider's own Retry-After.
 func (w *Worker) reschedule(ctx context.Context, j store.Job, cause error) {
-	// An unauthorized provider will not become authorized by waiting. Park the
-	// job now; linking the account and re-running enrichment revives it.
-	if errors.Is(cause, ErrNotAuthorized) {
-		if err := w.st.RetryJob(ctx, j.ID, w.clock.Now(), cause.Error(), 0); err != nil {
-			log.Printf("enrich: park: %v", err)
-		}
-		return
-	}
-
 	delay := time.Duration(math.Pow(2, float64(j.Attempts))) * 30 * time.Second
 	var retry *RetryableError
 	if errors.As(cause, &retry) && retry.After > 0 {
