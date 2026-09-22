@@ -16,14 +16,15 @@ import (
 )
 
 type API struct {
-	cat     *catalog.Catalog
-	pl      *player.Player
-	lists   *playlist.Service
-	enrich  Enricher    // nil when no metadata provider is configured
-	history History     // nil when history routes are not wired
-	library Library     // nil when no scanner is wired
-	spotify SpotifyLink // nil when Spotify credentials are absent
-	web     fs.FS
+	cat      *catalog.Catalog
+	pl       *player.Player
+	lists    *playlist.Service
+	enrich   Enricher    // nil when no metadata provider is configured
+	history  History     // nil when history routes are not wired
+	library  Library     // nil when no scanner is wired
+	discover Discovery   // nil when recommendations are off
+	spotify  SpotifyLink // nil when Spotify credentials are absent
+	web      fs.FS
 }
 
 func New(cat *catalog.Catalog, lists *playlist.Service, pl *player.Player, web fs.FS) *API {
@@ -73,6 +74,7 @@ func (a *API) Handler() http.Handler {
 	a.enrichRoutes(mux)
 	a.historyRoutes(mux)
 	a.libraryRoutes(mux)
+	a.discoverRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

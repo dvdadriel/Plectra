@@ -17,6 +17,7 @@
     <h1 class="wordmark">Plectra</h1>
     <nav aria-label="Library">
       <button data-view="albums" aria-current="true">Albums</button>
+      <button data-view="discover">Discover</button>
       <button data-view="artists">Artists</button>
       <button data-view="playlists">Playlists</button>
       <button data-view="likes">Likes</button>
@@ -124,7 +125,7 @@ const emptyState = (title, detail) => `<p class="empty"><strong>${title}</strong
 const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t, i) => `
   <li class="${opts.queue && i === state.index ? 'playing' : ''}">
     <span class="no">${opts.queue || opts.playlist ? i + 1 : (t.trackNo || i + 1)}</span>
-    <button class="grow" data-index="${i}" data-list='${opts.queue ? 'queue' : 'tracks'}'>
+    <button class="grow" data-index="${(opts.offset || 0) + i}" data-list='${opts.queue ? 'queue' : 'tracks'}'>
       ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
     </button>
     <span class="dur">${mmss(t.durationMs)}</span>
@@ -150,6 +151,22 @@ async function render() {
     return m.innerHTML = as.length ? '<ul>' + as.map(a => `
       <li><button class="grow" data-play='{"artistID":${a.id}}'>${esc(a.name)}</button></li>`).join('') + '</ul>'
       : emptyState('No artists yet.', 'They appear once the library is scanned.');
+  }
+  if (view === 'discover') {
+    const sections = (await get('/discover')) || [];
+    listing = sections.flatMap(s => s.tracks || []);
+    if (!sections.length) {
+      return m.innerHTML = emptyState('Nothing to suggest yet.',
+        'Discover ranks your own library using what you actually play. Listen to a few things and come back.');
+    }
+    let offset = 0;
+    return m.innerHTML = sections.map(sec => {
+      const html = `<h2>${esc(sec.title)}</h2>
+        <p class="sub">${esc(sec.reason)}</p>
+        ${trackList(sec.tracks, {offset})}`;
+      offset += sec.tracks.length;
+      return html;
+    }).join('');
   }
   if (view === 'likes') {
     listing = (await get('/likes')) || [];

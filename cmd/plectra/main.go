@@ -20,6 +20,7 @@ import (
 	"github.com/plectra/plectra/internal/api/native"
 	"github.com/plectra/plectra/internal/api/subsonic"
 	"github.com/plectra/plectra/internal/catalog"
+	"github.com/plectra/plectra/internal/discovery"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
 	"github.com/plectra/plectra/internal/metadata"
@@ -42,6 +43,7 @@ func main() {
 	lbToken := flag.String("listenbrainz-token", os.Getenv("LISTENBRAINZ_TOKEN"), "ListenBrainz token, to scrobble plays (optional)")
 	spotifyRedirect := flag.String("spotify-redirect", "",
 		"OAuth redirect URI registered with Spotify (default http://127.0.0.1:<port>/api/spotify/callback)")
+	lastfmKey := flag.String("lastfm-key", os.Getenv("LASTFM_API_KEY"), "Last.fm API key, improves recommendations (optional)")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -154,6 +156,14 @@ func main() {
 		api = api.WithMetadata(nil, link)
 	}
 
+	// Recommendations rank tracks already in the library, using plays recorded
+	// here. The similarity providers are optional: ListenBrainz needs no key,
+	// Last.fm is used only when one is supplied.
+	api = api.WithDiscovery(discovery.New(st,
+		discovery.NewListenBrainz(),
+		lastfmProvider(*lastfmKey),
+	))
+
 	handler := api.Handler()
 
 	// OpenSubsonic is the one surface reachable from other devices, so it stays
@@ -239,6 +249,15 @@ func defaultRedirect(addr string) string {
 		port = p
 	}
 	return "http://127.0.0.1:" + port + "/api/spotify/callback"
+}
+
+// lastfmProvider returns a typed nil-free value: a nil *LastFM inside a
+// non-nil interface would look configured and fail on every call.
+func lastfmProvider(key string) discovery.SimilarProvider {
+	if l := discovery.NewLastFM(key); l != nil {
+		return l
+	}
+	return nil
 }
 
 func report(r library.Result, err error) {
