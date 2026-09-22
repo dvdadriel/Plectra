@@ -321,14 +321,7 @@ async function settingsPanel() {
 
     <h2>Accounts</h2>
     ${credentialsPanel(creds)}
-
-    <h2>Spotify playlists</h2>
-    <p class="sub">Paste a public playlist link. No account, no login — Plectra reads
-      the same page Spotify shows to anyone. Tracks you own play from your library;
-      the rest can be played from an external source.</p>
-    <input class="path" id="sp-url" placeholder="https://open.spotify.com/playlist/…">
-    <div><button class="action" id="sp-load">Open playlist</button></div>
-    <div id="sp-result"></div>`;
+`;
 }
 
 /* ---- interaction ---- */
@@ -436,30 +429,6 @@ async function onMainClick(e) {
       </li>`).join('') + '</ul>';
     return;
   }
-  if (e.target.id === 'sp-load') {
-    const url = $('#sp-url').value.trim();
-    if (!url) return $('#sp-result').innerHTML = '<p class="sub">Paste a playlist link first.</p>';
-    e.target.disabled = true;
-    $('#sp-result').innerHTML = busy('Reading the playlist from Spotify…');
-    const resp = await fetch('/api/spotify/playlist', {method: 'POST', body: JSON.stringify({url})});
-    e.target.disabled = false;
-    if (!resp.ok) return $('#sp-result').innerHTML = `<p class="sub">${esc(await resp.text())}</p>`;
-    const pl = await resp.json();
-    $('#sp-result').innerHTML = `
-      <h2>${esc(pl.name)}</h2>
-      <p class="sub">${pl.tracks.length} tracks · ${pl.inLibrary} already in your library${
-        pl.truncated ? ' · Spotify only hands over the first 25 without an account' : ''}</p>
-      <ul>${pl.tracks.map((t, i) => `
-        <li>
-          <span class="no">${i + 1}</span>
-          <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
-            ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
-          </button>
-          <span class="dur">${mmss(t.durationMs)}</span>
-          <span class="meta">${t.localId ? 'library' : 'external'}</span>
-        </li>`).join('')}</ul>`;
-    return;
-  }
   if (e.target.id === 'save-creds') {
     const body = {};
     const put = (field, id) => {
@@ -506,23 +475,6 @@ async function onMainClick(e) {
     return;
   }
 
-  if (e.target.id === 'imp-pl' || e.target.id === 'imp-liked') {
-    const what = e.target.id === 'imp-liked' ? 'liked' : 'playlists';
-    $('#impresult').textContent = 'Importing…';
-    const resp = await fetch('/api/spotify/import?what=' + what, {method: 'POST'});
-    if (!resp.ok) {
-      const text = (await resp.text()).trim();
-      $('#impresult').textContent = resp.status === 403
-        ? text  // the server explains the development-mode user list
-        : `${text} (HTTP ${resp.status})`;
-      return;
-    }
-    const r = await resp.json();
-    $('#impresult').textContent =
-      `${r.matched} tracks matched${r.playlists ? ', ' + r.playlists + ' playlists' : ''}` +
-      (r.unmatched?.length ? ` · ${r.unmatched.length} not in your library` : '') +
-      (r.skipped?.length ? ` · Spotify would not share ${r.skipped.length} of its own playlists (${r.skipped.join(', ')})` : '');
-  }
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
