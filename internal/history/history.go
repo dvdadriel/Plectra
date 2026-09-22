@@ -14,6 +14,14 @@ import (
 // SourcePlectra marks plays produced by this player, as opposed to imported ones.
 const SourcePlectra = "plectra"
 
+// reachedEnd reports that playback stopped at the end of the track rather than
+// somewhere in the middle. Pausing mid-track is not the end of a listen.
+// A track with no known duration cannot be judged this way.
+func reachedEnd(msPlayed, durationMS int64) bool {
+	const slack = 3000 // the ring buffer drains a moment after the last sample
+	return durationMS > 0 && msPlayed+slack >= durationMS
+}
+
 // completed is the scrobble convention: half the track, or four minutes.
 func completed(msPlayed, durationMS int64) bool {
 	if msPlayed >= 4*60*1000 {
@@ -85,6 +93,12 @@ func (r *Recorder) observe(ctx context.Context, st player.State) {
 	case r.active:
 		if st.PositionMS > r.curPos {
 			r.curPos = st.PositionMS // a seek backwards must not shrink what was heard
+		}
+		// A track that plays to its end and stops there is finished listening,
+		// even though no other track follows. Without this, the last track of a
+		// queue is only banked when the process exits.
+		if !st.Playing && reachedEnd(r.curPos, r.cur.DurationMS) {
+			r.flush(ctx)
 		}
 	}
 }
