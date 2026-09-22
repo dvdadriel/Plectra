@@ -163,7 +163,8 @@ func (a *API) spotifyImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, metadata.ErrForbidden) {
-		http.Error(w, metadata.ErrForbidden.Error(), 403)
+		// err carries Spotify's own explanation; the sentinel alone says nothing.
+		http.Error(w, err.Error(), 403)
 		return
 	}
 	if err != nil {

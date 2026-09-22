@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -95,14 +96,40 @@ func looksLikeCredential(v string) bool {
 // ErrNotAuthorized means the user has not linked their Spotify account yet.
 var ErrNotAuthorized = errors.New("spotify: not authorized")
 
-// ErrForbidden is Spotify refusing a token it recognises. For a self-hosted
-// application this nearly always means one thing: the app is in development
-// mode, which serves only the accounts listed in its dashboard, and this
-// account is not one of them.
-var ErrForbidden = errors.New("this Spotify account is not on your application's user list. " +
-	"An app in development mode only works for accounts added under " +
-	"Settings → User Management in the Spotify dashboard (up to five). " +
-	"Add the account you just linked, then import again")
+// ErrForbidden is Spotify refusing a token it recognises. The reason varies —
+// the owner of the application needs an active Premium subscription, or the
+// account is not on a development-mode app's user list — and Spotify says which
+// in the response body. Never guess it: wrap what Spotify actually said.
+var ErrForbidden = errors.New("spotify refused this request")
+
+// forbidden wraps Spotify's own explanation so the user reads their words, not
+// our assumption about which rule they hit.
+func forbidden(detail string) error {
+	if detail == "" {
+		detail = "no reason given. The usual causes are that the account which owns " +
+			"the Spotify application has no active Premium subscription, or that this " +
+			"account is not on the application's user list in the dashboard"
+	}
+	return fmt.Errorf("%w: %s", ErrForbidden, detail)
+}
+
+// apiMessage pulls the human-readable part out of an error response. Spotify
+// answers sometimes in JSON, sometimes in plain text.
+func apiMessage(r io.Reader) string {
+	b, err := io.ReadAll(io.LimitReader(r, 4<<10))
+	if err != nil || len(b) == 0 {
+		return ""
+	}
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(b, &body); err == nil && body.Error.Message != "" {
+		return body.Error.Message
+	}
+	return strings.TrimSpace(string(b))
+}
 
 // StartAuth begins the authorization-code flow and returns the URL to send the
 // browser to. The returned state is remembered and must come back unchanged;
@@ -268,8 +295,11 @@ func (s *Spotify) get(ctx context.Context, path string, out any) error {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrNotAuthorized
 	case resp.StatusCode == http.StatusForbidden:
-		return ErrForbidden
+		return forbidden(apiMessage(resp.Body))
 	case resp.StatusCode != http.StatusOK:
+		if msg := apiMessage(resp.Body); msg != "" {
+			return fmt.Errorf("spotify: status %d: %s", resp.StatusCode, msg)
+		}
 		return fmt.Errorf("spotify: status %d", resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)

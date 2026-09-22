@@ -221,9 +221,9 @@ func TestPlaylistSpotifyRefusesIsSkippedNotFatal(t *testing.T) {
 	}
 }
 
-// Spotify answers 403 for an account that is not on a development-mode app's
-// user list. "status 403" tells the user nothing; the error has to name the fix.
-func TestForbiddenExplainsTheDevelopmentModeUserList(t *testing.T) {
+// A 403 has several causes and Spotify names the real one in the body. Guessing
+// it — as an earlier version did — sends the user to fix the wrong thing.
+func TestForbiddenCarriesSpotifysOwnExplanation(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -237,8 +237,10 @@ func TestForbiddenExplainsTheDevelopmentModeUserList(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The plain-text shape Spotify actually returns for this case.
+	const spotifySays = "Active premium subscription required for the owner of the app."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"status":403,"message":"Forbidden."}}`, http.StatusForbidden)
+		http.Error(w, spotifySays, http.StatusForbidden)
 	}))
 	defer srv.Close()
 
@@ -247,9 +249,33 @@ func TestForbiddenExplainsTheDevelopmentModeUserList(t *testing.T) {
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
 	}
-	for _, want := range []string{"development mode", "User Management"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the message never mentions %q: %v", want, err)
-		}
+	if !strings.Contains(err.Error(), spotifySays) {
+		t.Fatalf("err = %v, want it to carry Spotify's own words", err)
+	}
+}
+
+// The JSON shape, which other endpoints use.
+func TestForbiddenReadsTheJSONErrorMessage(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.SaveToken(ctx, "spotify", store.Token{
+		AccessToken: "t", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"message":"User not registered in the Developer Dashboard"}}`))
+	}))
+	defer srv.Close()
+
+	_, err = newTestSpotify(t, st, srv.URL).ImportLiked(ctx)
+	if !strings.Contains(err.Error(), "User not registered in the Developer Dashboard") {
+		t.Fatalf("err = %v, want the JSON message", err)
 	}
 }
