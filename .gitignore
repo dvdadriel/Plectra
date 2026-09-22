@@ -1,0 +1,7 @@
+.claude-flow
+.claude
+docs/plectra
+/plectra
+*.db
+*.db-wal
+*.db-shm
