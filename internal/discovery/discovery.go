@@ -37,6 +37,7 @@ type SimilarProvider interface {
 type Service struct {
 	st        *store.Store
 	providers []SimilarProvider
+	charts    Charts // nil when the world's charts are unavailable
 	// Now is injectable so "not heard in a while" is testable without waiting.
 	Now func() time.Time
 }

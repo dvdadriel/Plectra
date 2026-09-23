@@ -2,14 +2,15 @@
 package player
 
 import (
+	"context"
 	"io"
 	"log"
 	"math/rand"
-
-	"github.com/plectra/plectra/internal/audio"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/plectra/plectra/internal/audio"
 	"github.com/plectra/plectra/internal/store"
 )
 
@@ -63,6 +64,16 @@ type Player struct {
 	trackOff   int64     // ms skipped into the current track by a seek or a restore
 	drainTo    int64     // stop only once the sink has consumed this frame
 	switches   []switchPoint
+
+	// Suggest, when set, is asked for more music as the queue runs down, so
+	// playback continues with no browser open. Nil by default: the player works
+	// without it and this package imports nothing to provide it.
+	//
+	// It is called on its own goroutine — never on the pump loop, which is
+	// feeding the audio device. A database query or an HTTP call there is a
+	// dropout you can hear.
+	Suggest   func(ctx context.Context, seed store.Track) []store.Track
+	refilling atomic.Bool
 }
 
 type switchPoint struct {
@@ -424,7 +435,41 @@ func (p *Player) advanceSwitches() {
 		p.trackOff = 0
 		p.switches = p.switches[1:]
 		p.emitState()
+		p.maybeRefill()
 	}
+}
+
+// refillAt is how close to the end of the queue the refill is asked for. Two
+// tracks is enough time for a query and a network lookup to finish before the
+// music would otherwise stop.
+const refillAt = 2
+
+// maybeRefill tops up the queue as it runs down. Appends only: whatever is
+// already queued keeps its place, so this never jumps ahead of a queue the
+// listener built themselves.
+func (p *Player) maybeRefill() {
+	if p.Suggest == nil || p.repeat != "off" || p.index < 0 {
+		return
+	}
+	if len(p.queue)-p.index > refillAt {
+		return
+	}
+	// One at a time. Without this every state change near the end of the queue
+	// would start another lookup.
+	if !p.refilling.CompareAndSwap(false, true) {
+		return
+	}
+
+	seed := p.queue[p.index]
+	go func() {
+		defer p.refilling.Store(false)
+		more := p.Suggest(context.Background(), seed)
+		if len(more) > 0 {
+			// Back in through the command channel, so the queue is only ever
+			// touched by the goroutine that owns it.
+			p.Enqueue(more)
+		}
+	}()
 }
 
 // removeAt drops a queue entry, keeping the current track playing unless it is

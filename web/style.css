@@ -225,6 +225,21 @@ h2:first-child { margin-top: 0; }
   gap: 24px 20px;
 }
 
+/* A home section is one row that scrolls sideways, not a block that pushes the
+   next section off the screen. Six sections stacked as full grids would be six
+   screenfuls before you reached the charts. */
+.grid.row {
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  grid-auto-columns: 168px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+.grid.row > .card { scroll-snap-align: start; }
+
 .card {
   cursor: pointer;
   border: 0;
@@ -341,7 +356,11 @@ li.playing .grow { font-weight: 600; }
 }
 .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 4px; }
 
-button.action {
+/* An anchor wears this too: the Spotify login must be a real navigation, not a
+   fetch, or the consent screen cannot open. */
+button.action, a.action {
+  display: inline-block;
+  text-decoration: none;
   font: 500 14px/1 var(--sans);
   color: var(--ink);
   background: var(--surface);
@@ -352,7 +371,7 @@ button.action {
   margin: 0 8px 10px 0;
   transition: border-color var(--fast), background var(--fast);
 }
-button.action:hover { border-color: var(--line-strong); background: var(--surface-2); }
+button.action:hover, a.action:hover { border-color: var(--line-strong); background: var(--surface-2); }
 
 input.path {
   width: 100%;
@@ -598,8 +617,8 @@ button[disabled] { opacity: 0.6; cursor: default; }
 
 /* ---- add-to-queue and the right-click menu ---- */
 
-/* The card is the play target, so its queue button sits on the sleeve and
-   only appears on hover or focus — the grid stays about the covers. */
+/* The card opens the album, so play and queue sit on the sleeve itself and only
+   appear on hover or focus — the grid stays about the covers. */
 .card { position: relative; }
 
 .card .add {
@@ -621,9 +640,34 @@ button[disabled] { opacity: 0.6; cursor: default; }
 .card .add:focus-visible { opacity: 1; }
 .card .add:hover { background: var(--accent); color: var(--on-accent); }
 
-/* Touch has no hover, so there the button is simply always there. */
+/* Play sits beside the queue button rather than under it. */
+.card .add.play { right: 46px; }
+.card .add.play svg { translate: 1px 0; } /* the glyph's own left bias */
+
+/* Touch has no hover, so there the buttons are simply always there. */
 @media (hover: none) {
   .card .add { opacity: 1; }
+}
+
+/* ---- album detail ---- */
+
+.album-head {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+
+.album-head .art { width: 200px; flex: none; }
+
+.album-meta { min-width: 0; }
+.album-meta h2 { margin: 10px 0 2px; }
+.album-meta > div { margin-top: 16px; }
+
+/* Narrow screens stack it: a 200px sleeve beside text leaves no room for either. */
+@media (max-width: 560px) {
+  .album-head { flex-direction: column; gap: 16px; }
+  .album-head .art { width: 100%; }
 }
 
 /* display on .menu/.toast would otherwise outrank the [hidden] default. */
@@ -669,3 +713,119 @@ button[disabled] { opacity: 0.6; cursor: default; }
   border-radius: var(--r-pill);
   box-shadow: 0 8px 24px color-mix(in oklab, var(--navy) 28%, transparent);
 }
+
+/* Numbered instructions in Settings: short enough not to need a list style. */
+.steps {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* The pager sits under a list, not inside it. */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+.pager .action { margin-bottom: 0; }
+.pager .action[disabled] { opacity: 0.4; cursor: default; }
+.pager .action[disabled]:hover { border-color: var(--line); background: var(--surface); }
+
+/* A link that is really a button: "See all 412" belongs in the sentence that
+   explains the row, not beside it as another pill. */
+.linky {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* ---- search dropdown ---- */
+
+/* Floats under the search box: typing must not throw away the screen behind it,
+   which is what a full-page result view did. */
+.drop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 12px);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.16);
+}
+.tools { position: relative; }
+
+.drop-h {
+  margin: 8px 8px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Two per row, so a cover is big enough to recognise without scrolling far. */
+.hits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.hit {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hit:hover, .hit:focus-visible { background: var(--surface-2); }
+
+.hit img, .hit .art-empty {
+  grid-row: 1 / 3;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-xs, 4px);
+  object-fit: cover;
+  font-size: 16px;
+}
+
+.hit-t {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hit-s {
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A track hit has no sleeve, so it spans the whole width. */
+.hit.row { grid-template-columns: 1fr; grid-template-rows: auto auto; }
+.hit.row .hit-t, .hit.row .hit-s { grid-column: 1; }

@@ -37,7 +37,7 @@ func TestUndecodableAndUnplayableStationsAreLeftOut(t *testing.T) {
 		w.Write([]byte(directoryAnswer))
 	})
 
-	got, err := d.Top(context.Background(), 10)
+	got, _, err := d.Top(context.Background(), 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestSearchPassesTheQueryAndHidesBrokenStations(t *testing.T) {
 		got = r.URL.RawQuery
 		w.Write([]byte(`[]`))
 	})
-	if _, err := d.Search(context.Background(), "jazz radio", 5); err != nil {
+	if _, _, err := d.Search(context.Background(), "jazz radio", 5, 0); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"name=jazz+radio", "hidebroken=true", "limit=5"} {
@@ -77,7 +77,7 @@ func TestDirectoryFailureIsReported(t *testing.T) {
 	d := newDirectory(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadGateway)
 	})
-	if _, err := d.Top(context.Background(), 5); err == nil {
+	if _, _, err := d.Top(context.Background(), 5, 0); err == nil {
 		t.Fatal("a failing directory reported success")
 	}
 }
@@ -102,4 +102,37 @@ func contains(h, n string) bool {
 		}
 	}
 	return false
+}
+
+func TestPagingSendsAnOffsetAndReportsWhetherMoreExist(t *testing.T) {
+	var got string
+	d := newDirectory(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.RawQuery
+		w.Write([]byte(directoryAnswer))
+	})
+
+	// directoryAnswer holds four stations, two of them playable.
+	_, more, err := d.Top(context.Background(), 4, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"offset=40", "limit=4"} {
+		if !contains(got, want) {
+			t.Errorf("query %q is missing %q", got, want)
+		}
+	}
+	// Four rows came back for a page of four, so there is probably another —
+	// even though filtering left only two. Deciding from the filtered count
+	// would end the list early and hide stations that do play.
+	if !more {
+		t.Error("more = false on a full page; paging would stop at the first page with unplayable entries")
+	}
+
+	_, more, err = d.Top(context.Background(), 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if more {
+		t.Error("more = true on a page the directory did not fill")
+	}
 }

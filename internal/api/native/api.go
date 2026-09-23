@@ -16,21 +16,33 @@ import (
 )
 
 type API struct {
-	cat      *catalog.Catalog
-	pl       *player.Player
-	lists    *playlist.Service
-	enrich   Enricher  // nil when no metadata provider is configured
-	history  History   // nil when history routes are not wired
-	library  Library   // nil when no scanner is wired
-	discover Discovery // nil when recommendations are off
-	radio    Radio     // nil when the station directory is unavailable
-	sources  Sources   // nil when no external source is configured
-	browser  Browser   // nil when catalogue search is off
-	web      fs.FS
+	cat         *catalog.Catalog
+	pl          *player.Player
+	lists       *playlist.Service
+	enrich      Enricher       // nil when no metadata provider is configured
+	history     History        // nil when history routes are not wired
+	library     Library        // nil when no scanner is wired
+	discover    Discovery      // nil when recommendations are off
+	radio       Radio          // nil when the station directory is unavailable
+	sources     Sources        // nil when no external source is configured
+	browser     Browser        // nil when catalogue search is off
+	fastBrowser Browser        // nil when the search-as-you-type catalogue is off
+	spotify     SpotifyAccount // nil when no Spotify client id is configured
+	covers      *remoteCovers  // nil when no cover directory is configured
+	web         fs.FS
 }
 
 func New(cat *catalog.Catalog, lists *playlist.Service, pl *player.Player, web fs.FS) *API {
 	return &API{cat: cat, lists: lists, pl: pl, web: web}
+}
+
+// WithCoverCache lets Plectra cache artwork for albums it does not own, which
+// the home view's chart rows are made of.
+func (a *API) WithCoverCache(dir string) *API {
+	if dir != "" {
+		a.covers = newRemoteCovers(dir)
+	}
+	return a
 }
 
 // WithMetadata attaches the optional enrichment routes. Metadata is never
@@ -51,6 +63,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/cover/{id}", a.cover)
 
 	mux.HandleFunc("POST /api/playlists/import", a.importPlaylists)
+	mux.HandleFunc("OPTIONS /api/playlists/import", a.importPreflight)
 	mux.HandleFunc("GET /api/playlists", a.playlists)
 	mux.HandleFunc("POST /api/playlists", a.createPlaylist)
 	mux.HandleFunc("GET /api/playlists/{id}", a.playlistTracks)
@@ -83,6 +96,8 @@ func (a *API) Handler() http.Handler {
 	a.radioRoutes(mux)
 	a.sourceRoutes(mux)
 	a.browseRoutes(mux)
+	a.spotifyRoutes(mux)
+	a.remoteCoverRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux
@@ -93,13 +108,36 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// albums answers one page of the library. The whole list is read and sliced
+// here rather than in SQL: the query is already sorted and a library that makes
+// this expensive would make the scanner expensive first.
 func (a *API) albums(w http.ResponseWriter, r *http.Request) {
 	al, err := a.cat.Albums(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, al)
+	total := len(al)
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 {
+		// No paging asked for: answer the whole list, as this endpoint always has.
+		writeJSON(w, al)
+		return
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := min(offset+limit, total)
+
+	writeJSON(w, struct {
+		Albums []store.Album `json:"albums"`
+		Total  int           `json:"total"`
+	}{al[offset:end], total})
 }
 
 func (a *API) artists(w http.ResponseWriter, r *http.Request) {
@@ -113,10 +151,18 @@ func (a *API) artists(w http.ResponseWriter, r *http.Request) {
 
 func pathID(r *http.Request) (int64, error) { return strconv.ParseInt(r.PathValue("id"), 10, 64) }
 
+// albumTracks answers with the album itself as well as its songs: the detail
+// view needs a title, an artist and a year, and asking for them separately
+// would be two round trips for one screen.
 func (a *API) albumTracks(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
 		http.Error(w, "bad id", 400)
+		return
+	}
+	al, err := a.cat.Album(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
 		return
 	}
 	ts, err := a.cat.AlbumTracks(r.Context(), id)
@@ -124,7 +170,10 @@ func (a *API) albumTracks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, ts)
+	writeJSON(w, struct {
+		store.Album
+		Tracks []store.Track `json:"tracks"`
+	}{al, ts})
 }
 
 func (a *API) artistTracks(w http.ResponseWriter, r *http.Request) {

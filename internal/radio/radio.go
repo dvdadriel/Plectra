@@ -46,21 +46,30 @@ func New() *Directory {
 const userAgent = "Plectra/0.7 (https://github.com/plectra/plectra)"
 
 // Top returns the most-clicked stations, for a browse view that is not empty
-// before the user has typed anything.
-func (d *Directory) Top(ctx context.Context, limit int) ([]Station, error) {
-	return d.fetch(ctx, fmt.Sprintf("/json/stations/topclick/%d", clamp(limit)), nil)
+// before the user has typed anything. The second return says whether the
+// directory held more beyond this page.
+func (d *Directory) Top(ctx context.Context, limit, offset int) ([]Station, bool, error) {
+	n := clamp(limit)
+	q := url.Values{
+		"limit":      {fmt.Sprint(n)},
+		"offset":     {fmt.Sprint(max(offset, 0))},
+		"hidebroken": {"true"},
+	}
+	return d.fetch(ctx, "/json/stations/topclick?"+q.Encode(), n)
 }
 
 // Search finds stations by name.
-func (d *Directory) Search(ctx context.Context, query string, limit int) ([]Station, error) {
+func (d *Directory) Search(ctx context.Context, query string, limit, offset int) ([]Station, bool, error) {
+	n := clamp(limit)
 	q := url.Values{
 		"name":       {query},
-		"limit":      {fmt.Sprint(clamp(limit))},
+		"limit":      {fmt.Sprint(n)},
+		"offset":     {fmt.Sprint(max(offset, 0))},
 		"hidebroken": {"true"},
 		"order":      {"clickcount"},
 		"reverse":    {"true"},
 	}
-	return d.fetch(ctx, "/json/stations/search?"+q.Encode(), nil)
+	return d.fetch(ctx, "/json/stations/search?"+q.Encode(), n)
 }
 
 // Click tells the directory a station was played. It is how the rankings stay
@@ -79,20 +88,23 @@ func (d *Directory) Click(ctx context.Context, uuid string) {
 	}
 }
 
-func (d *Directory) fetch(ctx context.Context, path string, _ any) ([]Station, error) {
+// fetch reads one page. `asked` is the page size, which is how a full page is
+// told from the last one: the filtering below drops unplayable stations, so the
+// number returned says nothing about whether more exist.
+func (d *Directory) fetch(ctx context.Context, path string, asked int) ([]Station, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.BaseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := d.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radio directory: status %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("radio directory: status %d", resp.StatusCode)
 	}
 
 	var raw []struct {
@@ -106,7 +118,7 @@ func (d *Directory) fetch(ctx context.Context, path string, _ any) ([]Station, e
 		Favicon string `json:"favicon"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	out := make([]Station, 0, len(raw))
@@ -122,7 +134,7 @@ func (d *Directory) fetch(ctx context.Context, path string, _ any) ([]Station, e
 			Tags: s.Tags, Favicon: s.Favicon,
 		})
 	}
-	return out, nil
+	return out, len(raw) >= asked, nil
 }
 
 // Playable reports whether Plectra can decode a station's codec today.

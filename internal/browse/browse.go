@@ -19,11 +19,14 @@ import (
 )
 
 type Album struct {
-	ID     string `json:"id"` // MusicBrainz release-group id
+	ID     string `json:"id"` // MusicBrainz release-group id, or "dz:<n>" for Deezer
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
 	Year   int    `json:"year,omitempty"`
 	Type   string `json:"type,omitempty"` // Album, Single, EP…
+	// Cover is set when the catalogue carries artwork inline. MusicBrainz does
+	// not; the caller falls back to Plectra's release-group cover cache.
+	Cover string `json:"cover,omitempty"`
 }
 
 type Track struct {

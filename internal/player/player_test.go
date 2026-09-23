@@ -1,11 +1,13 @@
 package player
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -265,5 +267,133 @@ func TestQueueOfBrokenFilesStopsWithoutCrashing(t *testing.T) {
 	// The engine must still answer: a panicked goroutine would hang this call.
 	if st := p.State(); len(st.Queue) != 4 {
 		t.Fatalf("queue = %d, want 4", len(st.Queue))
+	}
+}
+
+// makeQueue writes n playable files and returns them as a queue.
+func makeQueue(t *testing.T, n int, ms int) []store.Track {
+	t.Helper()
+	dir := t.TempDir()
+	var q []store.Track
+	for i := 0; i < n; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("t%d.wav", i))
+		writeWAV(t, p, ms)
+		q = append(q, store.Track{ID: int64(i + 1), Path: p, Title: fmt.Sprintf("T%d", i+1), DurationMS: int64(ms)})
+	}
+	return q
+}
+
+// A queue that runs down is topped up from Suggest, so playback continues with
+// no browser open — the whole point of doing this in the player rather than in
+// the page.
+func TestQueueRefillsItselfBeforeItRunsOut(t *testing.T) {
+	q := makeQueue(t, 3, 150)
+	extra := makeQueue(t, 2, 150)
+	for i := range extra {
+		extra[i].ID = int64(100 + i)
+		extra[i].Title = fmt.Sprintf("X%d", i+1)
+	}
+
+	var mu sync.Mutex
+	var seeds []string
+	calls := 0
+
+	p := New(&fakeSink{})
+	p.Suggest = func(_ context.Context, seed store.Track) []store.Track {
+		mu.Lock()
+		calls++
+		seeds = append(seeds, seed.Title)
+		first := calls == 1
+		mu.Unlock()
+		if !first {
+			return nil // top up once; this test is not about doing it forever
+		}
+		return extra
+	}
+	p.Play(q, 0)
+
+	waitFor(t, "the queue to grow", func() bool { return len(p.State().Queue) > 3 })
+
+	st := p.State()
+	// Appended, never inserted: a queue the listener built keeps its order.
+	want := []string{"T1", "T2", "T3", "X1", "X2"}
+	for i, w := range want {
+		if i >= len(st.Queue) || st.Queue[i].Title != w {
+			t.Fatalf("queue = %v, want %v — the refill must append", titlesOf(st.Queue), want)
+		}
+	}
+
+	mu.Lock()
+	gotSeed := len(seeds) > 0 && seeds[0] != ""
+	mu.Unlock()
+	if !gotSeed {
+		t.Error("Suggest was called with no seed track")
+	}
+
+	waitFor(t, "playback to reach the appended tracks", func() bool { return p.State().Index >= 3 })
+	waitFor(t, "playback to finish", func() bool { return !p.State().Playing })
+}
+
+func titlesOf(q []store.Track) []string {
+	out := make([]string, len(q))
+	for i, t := range q {
+		out[i] = t.Title
+	}
+	return out
+}
+
+// Without a Suggest the player must behave exactly as it always has: play to
+// the end and stop.
+func TestQueueStopsCleanlyWithNoSuggest(t *testing.T) {
+	p := New(&fakeSink{})
+	p.Play(makeQueue(t, 2, 150), 0)
+
+	waitFor(t, "playback to finish", func() bool { return !p.State().Playing })
+	if n := len(p.State().Queue); n != 2 {
+		t.Errorf("queue grew to %d with no Suggest set", n)
+	}
+}
+
+// Repeat means the listener asked for this queue again. Topping it up would
+// quietly turn a loop into an endless mix.
+func TestNoRefillWhenRepeatIsOn(t *testing.T) {
+	var calls atomic.Int32
+	p := New(&fakeSink{})
+	p.Suggest = func(context.Context, store.Track) []store.Track {
+		calls.Add(1)
+		return makeQueue(t, 1, 100)
+	}
+	p.SetMode(false, "all")
+	p.Play(makeQueue(t, 2, 120), 0)
+
+	waitFor(t, "the queue to wrap", func() bool { return p.State().Index == 0 && calls.Load() == 0 || calls.Load() > 0 })
+	time.Sleep(200 * time.Millisecond)
+	if n := calls.Load(); n != 0 {
+		t.Errorf("Suggest was called %d times with repeat on", n)
+	}
+}
+
+// The guard matters: every state change near the end of a queue would otherwise
+// start another lookup.
+func TestOnlyOneRefillRunsAtATime(t *testing.T) {
+	var concurrent, peak atomic.Int32
+	p := New(&fakeSink{})
+	p.Suggest = func(context.Context, store.Track) []store.Track {
+		n := concurrent.Add(1)
+		for {
+			old := peak.Load()
+			if n <= old || peak.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(60 * time.Millisecond)
+		concurrent.Add(-1)
+		return nil
+	}
+	p.Play(makeQueue(t, 4, 120), 0)
+
+	waitFor(t, "playback to finish", func() bool { return !p.State().Playing })
+	if peak.Load() > 1 {
+		t.Errorf("%d refills ran at once; the in-flight guard did not hold", peak.Load())
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/plectra/plectra/internal/api/subsonic"
 	"github.com/plectra/plectra/internal/browse"
 	"github.com/plectra/plectra/internal/catalog"
+	"github.com/plectra/plectra/internal/chart"
 	"github.com/plectra/plectra/internal/discovery"
 	"github.com/plectra/plectra/internal/history"
 	"github.com/plectra/plectra/internal/library"
@@ -29,6 +30,7 @@ import (
 	"github.com/plectra/plectra/internal/playlist"
 	"github.com/plectra/plectra/internal/radio"
 	"github.com/plectra/plectra/internal/source"
+	"github.com/plectra/plectra/internal/spotify"
 	"github.com/plectra/plectra/internal/store"
 	"github.com/plectra/plectra/web"
 )
@@ -44,7 +46,8 @@ func main() {
 	dbPath := flag.String("db", filepath.Join(dataDir, "plectra.db"), "database file")
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
-	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz and Spotify")
+	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz")
+	spotifyID := flag.String("spotify-id", "", "Spotify client id; empty disables the account panel")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -107,7 +110,8 @@ func main() {
 	}
 	api := native.New(catalog.New(st), playlist.New(st), pl, assets).
 		WithHistory(recorder).
-		WithLibrary(scanner)
+		WithLibrary(scanner).
+		WithCoverCache(*coverDir)
 
 	// Metadata is optional at every level: no network or a dead provider
 	// degrades a feature and never touches playback.
@@ -125,7 +129,16 @@ func main() {
 
 	// Recommendations rank tracks already in the library, using plays recorded
 	// here. No external similarity provider ships today.
-	api = api.WithDiscovery(discovery.New(st))
+	// Charts come from ListenBrainz, which needs no key; Last.fm is the
+	// fallback and uses one if it is there.
+	recs := discovery.New(st).WithCharts(chart.New(firstEnv("LASTFM_API_KEY", "last-fm-api-key")))
+	api = api.WithDiscovery(recs)
+
+	// Keep playing when the queue runs down. This lives in the player rather
+	// than in the page, so it works with no browser open.
+	pl.Suggest = func(ctx context.Context, seed store.Track) []store.Track {
+		return recs.NextUp(ctx, pl.State().Queue, 10)
+	}
 
 	// External sources are optional and self-declaring: a provider that needs a
 	// tool the user has not installed simply does not appear.
@@ -135,7 +148,19 @@ func main() {
 	}
 	api = api.WithRadio(radio.New()).
 		WithSources(sources).
-		WithBrowser(browse.New())
+		WithBrowser(browse.New()).
+		WithFastBrowser(browse.NewDeezer())
+
+	// Spotify is a source of playlists, never of audio. PKCE means a client id
+	// is enough — no secret is stored anywhere.
+	if id := firstEnv("SPOTIFY_CLIENT_ID", "spotify-client-id"); *spotifyID == "" {
+		*spotifyID = id
+	}
+	if *spotifyID != "" {
+		redirect := "http://" + *addr + "/api/spotify/callback"
+		api = api.WithSpotify(spotify.New(st, *spotifyID, redirect))
+		log.Printf("spotify: register this redirect URI in your app dashboard: %s", redirect)
+	}
 
 	handler := api.Handler()
 

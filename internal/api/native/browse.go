@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/plectra/plectra/internal/browse"
 )
@@ -19,8 +20,28 @@ func (a *API) WithBrowser(b Browser) *API {
 	return a
 }
 
+// WithFastBrowser adds the catalogue used for search-as-you-type. It answers in
+// about 200ms with artwork inline; the slower one stays as the fallback and for
+// ids it owns.
+func (a *API) WithFastBrowser(b Browser) *API {
+	a.fastBrowser = b
+	return a
+}
+
+// searchers returns the catalogues to try, fastest first.
+func (a *API) searchers() []Browser {
+	var out []Browser
+	if a.fastBrowser != nil {
+		out = append(out, a.fastBrowser)
+	}
+	if a.browser != nil {
+		out = append(out, a.browser)
+	}
+	return out
+}
+
 func (a *API) browseRoutes(mux *http.ServeMux) {
-	if a.browser == nil {
+	if a.browser == nil && a.fastBrowser == nil {
 		return
 	}
 	mux.HandleFunc("GET /api/browse", a.browseSearch)
@@ -34,8 +55,20 @@ func (a *API) browseSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	albums, err := a.browser.SearchAlbums(r.Context(), q, limit)
-	if err != nil {
+
+	// The fast catalogue first; the slower one only if it answered with nothing
+	// or could not be reached. One of them being down is not a failed search.
+	var (
+		albums []browse.Album
+		err    error
+	)
+	for _, b := range a.searchers() {
+		albums, err = b.SearchAlbums(r.Context(), q, limit)
+		if err == nil && len(albums) > 0 {
+			break
+		}
+	}
+	if err != nil && len(albums) == 0 {
 		http.Error(w, err.Error(), 502)
 		return
 	}
@@ -53,7 +86,17 @@ func (a *API) browseAlbum(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id is required", 400)
 		return
 	}
-	tracks, err := a.browser.Tracks(r.Context(), id)
+	// The id says which catalogue it came from, so a listing is never asked of
+	// the wrong one.
+	src := a.browser
+	if a.fastBrowser != nil && strings.HasPrefix(id, browse.IDPrefix) {
+		src = a.fastBrowser
+	}
+	if src == nil {
+		http.Error(w, "that catalogue is not configured", 400)
+		return
+	}
+	tracks, err := src.Tracks(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return

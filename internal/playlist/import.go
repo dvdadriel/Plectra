@@ -41,22 +41,28 @@ type ImportResult struct {
 	Empty     []string `json:"empty,omitempty"`
 }
 
-// ImportFile reads an export and creates local playlists from it, keeping only
-// the tracks whose files are in the library — a playlist entry that points at
-// nothing playable would be a lie.
+// ImportFile reads an export off disk. The browser path posts the same shape
+// straight to the API instead, so both end up in Import.
 func (s *Service) ImportFile(ctx context.Context, path string) (ImportResult, error) {
-	var res ImportResult
-
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return res, err
+		return ImportResult{}, err
 	}
 	var exp Export
 	if err := json.Unmarshal(b, &exp); err != nil {
-		return res, fmt.Errorf("%s is not a Plectra export file: %w", path, err)
+		return ImportResult{}, fmt.Errorf("%s is not a Plectra export file: %w", path, err)
 	}
+	return s.Import(ctx, exp)
+}
+
+// Import creates local playlists from an export, keeping only the tracks whose
+// files are in the library — a playlist entry that points at nothing playable
+// would be a lie.
+func (s *Service) Import(ctx context.Context, exp Export) (ImportResult, error) {
+	var res ImportResult
+
 	if len(exp.Playlists) == 0 && len(exp.Liked) == 0 {
-		return res, fmt.Errorf("%s contains no playlists", path)
+		return res, fmt.Errorf("the export contains no playlists")
 	}
 
 	index, err := s.index(ctx)

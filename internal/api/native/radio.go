@@ -11,8 +11,8 @@ import (
 
 // Radio is the slice of the station directory the API is allowed to use.
 type Radio interface {
-	Top(ctx context.Context, limit int) ([]radio.Station, error)
-	Search(ctx context.Context, query string, limit int) ([]radio.Station, error)
+	Top(ctx context.Context, limit, offset int) ([]radio.Station, bool, error)
+	Search(ctx context.Context, query string, limit, offset int) ([]radio.Station, bool, error)
 	Click(ctx context.Context, uuid string)
 }
 
@@ -29,16 +29,21 @@ func (a *API) radioRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/radio/play", a.radioPlay)
 }
 
+// radioStations answers one page. `more` comes from the directory rather than
+// from the length of the list: unplayable codecs are filtered out, so a short
+// page does not mean the last page.
 func (a *API) radioStations(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	var (
 		stations []radio.Station
+		more     bool
 		err      error
 	)
 	if q := r.URL.Query().Get("q"); q != "" {
-		stations, err = a.radio.Search(r.Context(), q, limit)
+		stations, more, err = a.radio.Search(r.Context(), q, limit, offset)
 	} else {
-		stations, err = a.radio.Top(r.Context(), limit)
+		stations, more, err = a.radio.Top(r.Context(), limit, offset)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), 502) // the directory is someone else's server
@@ -47,7 +52,10 @@ func (a *API) radioStations(w http.ResponseWriter, r *http.Request) {
 	if stations == nil {
 		stations = []radio.Station{}
 	}
-	writeJSON(w, stations)
+	writeJSON(w, struct {
+		Stations []radio.Station `json:"stations"`
+		More     bool            `json:"more"`
+	}{stations, more})
 }
 
 // radioPlay hands the player a station as a one-entry queue. The station is not

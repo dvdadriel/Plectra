@@ -16,11 +16,9 @@
   <div class="bar">
     <h1 class="wordmark">Plectra</h1>
     <nav aria-label="Library">
-      <button data-view="albums" aria-current="true">Albums</button>
-      <button data-view="discover">Discover</button>
+      <button data-view="home" aria-current="true">Home</button>
       <button data-view="radio">Radio</button>
       <button data-view="find">Find</button>
-      <button data-view="artists">Artists</button>
       <button data-view="playlists">Playlists</button>
       <button data-view="likes">Likes</button>
       <button data-view="queue">Queue</button>
@@ -92,7 +90,7 @@ const mmss = ms => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-let view = 'albums', state = {}, liked = new Set(), searchTimer, playlistID = null;
+let view = 'home', state = {}, liked = new Set(), searchTimer, playlistID = null;
 
 /* ---- theme: system unless the listener forced one ---- */
 const themeBtn = $('#theme');
@@ -113,16 +111,54 @@ paintTheme();
 
 /* ---- views ---- */
 
+// Clicking the sleeve opens the album; the two small buttons act on it directly.
+// Opening is the more common intent, and playing an album you cannot see the
+// track list of is the thing people undo.
 const albumGrid = albums => albums.length ? `<div class="grid">` + albums.map(a => `
-  <div class="card" data-play='{"albumID":${a.id}}' tabindex="0" role="button"
-       aria-label="Play ${esc(a.title)} by ${esc(a.artist)}">
+  <div class="card" data-open-album="${a.id}" tabindex="0" role="button"
+       aria-label="Open ${esc(a.title)} by ${esc(a.artist)}">
     <img class="art" loading="lazy" src="/api/cover/${a.id}" alt=""
          data-initial="${esc((a.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">
     <div class="t">${esc(a.title)}</div>
     <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
+    <button class="add play" data-play='{"albumID":${a.id}}'
+            aria-label="Play ${esc(a.title)}">${ICON.play}</button>
     <button class="add" data-enq='{"albumID":${a.id}}'
             aria-label="Add ${esc(a.title)} to the queue">+</button>
   </div>`).join('') + `</div>` : emptyState('No albums yet.', 'Point <code>-music</code> at a folder of audio files and they appear here as they are scanned.');
+
+// A home row holds both kinds of album. One has a library id and opens a track
+// listing from disk; the other is only a name in the world's catalogue and has
+// to be looked up first. They look identical on purpose — the difference shows
+// up when you open one, not when you scan the shelf.
+const albumRow = albums => !albums.length ? '' : `<div class="grid row">` + albums.map(a => {
+  const art = a.id
+    ? `/api/cover/${a.id}`
+    : (a.cover || '');
+  const sleeve = art
+    ? `<img class="art" loading="lazy" src="${esc(art)}" alt=""
+            data-initial="${esc((a.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">`
+    : `<div class="art art-empty" aria-hidden="true">${esc((a.title || '?').trim()[0] || '?')}</div>`;
+
+  const open = a.id
+    ? `data-open-album="${a.id}"`
+    : `data-open-mb='${esc(JSON.stringify({mbid: a.mbid, title: a.title, artist: a.artist, cover: a.cover || ''}))}'`;
+
+  // Only a library album can be played or queued without a lookup first.
+  const buttons = a.id ? `
+    <button class="add play" data-play='{"albumID":${a.id}}'
+            aria-label="Play ${esc(a.title)}">${ICON.play}</button>
+    <button class="add" data-enq='{"albumID":${a.id}}'
+            aria-label="Add ${esc(a.title)} to the queue">+</button>` : '';
+
+  return `<div class="card" ${open} tabindex="0" role="button"
+       aria-label="Open ${esc(a.title)} by ${esc(a.artist)}">
+    ${sleeve}
+    <div class="t">${esc(a.title)}</div>
+    <div class="s">${esc(a.artist)}${a.year ? ' · ' + a.year : ''}</div>
+    ${buttons}
+  </div>`;
+}).join('') + `</div>`;
 
 const skeletonGrid = (n = 8) => `<div class="skeleton-grid">${
   Array.from({length: n}, () => `<div><div class="skeleton skeleton-art"></div>
@@ -146,7 +182,9 @@ const emptyState = (title, detail) => `<p class="empty"><strong>${title}</strong
 
 const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t, i) => `
   <li class="${opts.queue && i === state.index ? 'playing' : ''}">
-    <span class="no">${opts.queue || opts.playlist ? i + 1 : (t.trackNo || i + 1)}</span>
+    <span class="no">${opts.queue || opts.playlist
+      ? (opts.offset || 0) + i + 1
+      : (t.trackNo || (opts.offset || 0) + i + 1)}</span>
     <button class="grow" data-index="${(opts.offset || 0) + i}" data-list='${opts.queue ? 'queue' : 'tracks'}'>
       ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
     </button>
@@ -160,46 +198,238 @@ const trackList = (tracks, opts = {}) => tracks.length ? '<ul>' + tracks.map((t,
 
 let listing = []; // what the current view would queue when a row is clicked
 
+/* ---- search: local instantly, the catalogue when it arrives ---- */
+
+const drop = Object.assign(document.createElement('div'), {className: 'drop', hidden: true});
+drop.id = 'drop';
+let searchAbort = null;
+
+const closeDrop = () => { drop.hidden = true; drop.innerHTML = ''; };
+
+// Local results come out of SQLite in single-digit milliseconds. Waiting for
+// the catalogue before painting anything is what used to make this feel slow,
+// so the two halves are drawn as they arrive rather than together.
+async function suggest(q) {
+  // Three characters: one or two match most of the library and cost a request
+  // for an answer nobody wants.
+  if (q.length < 3) return closeDrop();
+
+  searchAbort?.abort();          // whatever the last keystroke started is stale
+  const ac = new AbortController();
+  searchAbort = ac;
+
+  const paint = (localHTML, onlineHTML) => {
+    if (ac.signal.aborted) return;
+    drop.innerHTML = localHTML + onlineHTML;
+    drop.hidden = !drop.innerHTML;
+  };
+
+  const cards = (albums, kind) => albums.map(a => {
+    const open = kind === 'local'
+      ? `data-open-album="${a.id}"`
+      : `data-open-mb='${esc(JSON.stringify({mbid: a.id, title: a.title, artist: a.artist, cover: a.cover || ''}))}'`;
+    const art = kind === 'local' ? `/api/cover/${a.id}`
+      : (a.cover || (a.id.startsWith('dz:') ? '' : '/api/cover/rg/' + a.id));
+    return `<button class="hit" ${open}>
+      ${art ? `<img loading="lazy" src="${esc(art)}" alt=""
+             data-initial="${esc((a.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">`
+            : `<div class="art art-empty" aria-hidden="true">${esc((a.title || '?').trim()[0] || '?')}</div>`}
+      <span class="hit-t">${esc(a.title)}</span>
+      <span class="hit-s">${esc(a.artist)}</span>
+    </button>`;
+  }).join('');
+
+  const section = (title, html) => html ? `<p class="drop-h">${title}</p><div class="hits">${html}</div>` : '';
+
+  let localHTML = '';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q), {signal: ac.signal})
+      .then(res => res.ok ? res.json() : null);
+    localHTML = section('In your library', cards(r?.albums || [], 'local')) +
+      (r?.tracks?.length ? `<p class="drop-h">Tracks</p>` + r.tracks.slice(0, 6).map((t, i) => `
+        <button class="hit row" data-hit-track="${t.id}">
+          <span class="hit-t">${esc(t.title)}</span>
+          <span class="hit-s">${esc(t.artist)}</span>
+        </button>`).join('') : '');
+  } catch (e) { if (e.name === 'AbortError') return; }
+  paint(localHTML, `<p class="drop-h">Searching the catalogue…</p>`);
+
+  try {
+    const albums = await fetch('/api/browse?q=' + encodeURIComponent(q) + '&limit=12',
+      {signal: ac.signal}).then(res => res.ok ? res.json() : []);
+    paint(localHTML, section('Elsewhere', cards(albums || [], 'catalogue')) ||
+      '<p class="drop-h">Nothing else found.</p>');
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    paint(localHTML, '<p class="drop-h">The catalogue could not be reached.</p>');
+  }
+}
+
+/* ---- paging ---- */
+
+// One page size for every list. Long enough that most libraries need no paging
+// at all, short enough that a 10,000-track Likes list does not build 10,000 DOM
+// rows before the first one is visible.
+const PAGE = 50;
+let page = 0;
+
+// What the pager repaints. The album panel and a playlist are drawn over #main
+// without changing `view`, so render() alone would send Next back to the grid.
+let repaint = () => render();
+
+// Local lists are already in memory, so they are sliced here. Radio is the
+// exception: its pages come from someone else's directory and are fetched.
+const slice = items => items.slice(page * PAGE, (page + 1) * PAGE);
+
+// Rendered only when there is a second page. A "Page 1 of 1" is noise.
+function pager(hasMore, total) {
+  if (page === 0 && !hasMore) return '';
+  const from = page * PAGE + 1;
+  const to = total != null ? Math.min((page + 1) * PAGE, total) : (page + 1) * PAGE;
+  return `<nav class="pager" aria-label="Pages">
+    <button class="action" data-page="${page - 1}"${page === 0 ? ' disabled' : ''}>← Previous</button>
+    <span class="meta">${total != null ? `${from}–${to} of ${total}` : `Page ${page + 1}`}</span>
+    <button class="action" data-page="${page + 1}"${hasMore ? '' : ' disabled'}>Next →</button>
+  </nav>`;
+}
+
+// A paged list keeps its row indices absolute, so clicking row 3 of page 2
+// still plays the right track out of `listing`.
+function pagedList(items, opts = {}) {
+  const shown = slice(items);
+  return trackList(shown, {...opts, offset: (opts.offset || 0) + page * PAGE}) +
+    pager((page + 1) * PAGE < items.length, items.length);
+}
+
+/* ---- album detail ---- */
+
+// Painted over #main without touching `view`, so Back is just a re-render of
+// wherever the listener came from — grid, search results or Find.
+async function openAlbum(id) {
+  const m = $('#main');
+  page = 0;
+  repaint = () => openAlbum(id);
+  m.innerHTML = skeletonRows();
+  const al = await get('/albums/' + id);
+  if (!al) return m.innerHTML = emptyState('That album is gone.', 'It may have been removed from the library since this page was drawn.');
+
+  listing = al.tracks || [];
+  const total = listing.reduce((sum, t) => sum + (t.durationMs || 0), 0);
+  const ids = listing.map(t => t.id);
+
+  m.innerHTML = `
+    <div class="album-head">
+      <img class="art" src="/api/cover/${al.id}" alt=""
+           data-initial="${esc((al.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">
+      <div class="album-meta">
+        <button class="ghost" id="albumback">← Back</button>
+        <h2>${esc(al.title)}</h2>
+        <p class="sub">${esc(al.artist)}${al.year ? ' · ' + al.year : ''} ·
+          ${listing.length} track${listing.length === 1 ? '' : 's'}${total ? ' · ' + mmss(total) : ''}</p>
+        <div>
+          <button class="action" data-play='{"albumID":${al.id}}'>Play</button>
+          <button class="action" id="albumshuffle">Shuffle</button>
+          <button class="action" data-enq='{"albumID":${al.id}}'>Add to queue</button>
+        </div>
+      </div>
+    </div>
+    ${pagedList(listing)}`;
+
+  // Shuffled here rather than by turning on shuffle mode: that only reorders
+  // what comes after the current track, so track 1 would always open the album.
+  $('#albumshuffle').onclick = () => {
+    const order = ids.slice();
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    post('/player/play', {trackIDs: order, startIndex: 0});
+  };
+  $('#albumback').onclick = () => render();
+}
+
+// The same panel for an album Plectra does not own. The track listing comes from
+// MusicBrainz, and each row is marked with whether it will play from disk or has
+// to be resolved through an external source — so nobody presses play on a row
+// that is going to take five seconds without warning.
+async function openCatalogueAlbum(info) {
+  const m = $('#main');
+  page = 0;
+  repaint = () => openCatalogueAlbum(info);
+  m.innerHTML = skeletonRows();
+
+  const sleeve = info.cover
+    ? `<img class="art" src="${esc(info.cover)}" alt=""
+            data-initial="${esc((info.title || '?').trim()[0] || '?')}" onerror="emptySleeve(this)">`
+    : `<div class="art art-empty" aria-hidden="true">${esc((info.title || '?').trim()[0] || '?')}</div>`;
+
+  m.innerHTML = `
+    <div class="album-head">
+      ${sleeve}
+      <div class="album-meta">
+        <button class="ghost" id="albumback">← Back</button>
+        <h2>${esc(info.title)}</h2>
+        <p class="sub">${esc(info.artist)} · not in your library</p>
+      </div>
+    </div>
+    <div id="album-tracks">${busy('Reading the track listing from MusicBrainz…')}</div>`;
+  $('#albumback').onclick = () => render();
+
+  const tracks = (await get('/browse/album?id=' + encodeURIComponent(info.mbid))) || [];
+  const box = $('#album-tracks');
+  if (!box) return; // the listener navigated away while MusicBrainz was thinking
+  if (!tracks.length) {
+    box.innerHTML = '<p class="sub">No track listing published for this album.</p>';
+    return;
+  }
+  box.innerHTML = '<ul>' + tracks.map(t => `
+    <li>
+      <span class="no">${t.position || ''}</span>
+      <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
+        ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
+      </button>
+      <span class="dur">${mmss(t.durationMs)}</span>
+      <span class="meta">${t.localId ? 'library' : 'external'}</span>
+      ${t.localId ? `<button class="icon" data-enq='{"trackIDs":[${t.localId}]}'
+            aria-label="Add ${esc(t.title)} to the queue">+</button>` : ''}
+    </li>`).join('') + '</ul>';
+}
+
 async function render() {
-  showLoading(view === 'albums' || view === 'search' ? 'grid' : 'rows');
+  repaint = () => render();
+  showLoading(view === 'home' || view === 'albums' ? 'grid' : 'rows');
   liked = new Set(((await get('/likes')) || []).map(t => t.id));
   const m = $('#main');
   playlistID = null;
 
+  if (view === 'home') {
+    listing = [];
+    const sections = (await get('/home')) || [];
+    if (!sections.length) {
+      return m.innerHTML = emptyState('Nothing here yet.',
+        'Point <code>-music</code> at a folder of audio files, or run Sync local music in Settings.');
+    }
+    return m.innerHTML = sections.map(sec => `<h2>${esc(sec.title)}</h2>
+      <p class="sub">${esc(sec.reason)}${sec.more && sec.total > sec.albums.length
+        ? ` <button class="linky" data-view-all="${esc(sec.more)}">See all ${sec.total}</button>`
+        : ''}</p>
+      ${albumRow(sec.albums)}`).join('');
+  }
   if (view === 'albums') {
     listing = [];
-    return m.innerHTML = albumGrid((await get('/albums')) || []);
-  }
-  if (view === 'artists') {
-    const as = (await get('/artists')) || [];
-    listing = [];
-    return m.innerHTML = as.length ? '<ul>' + as.map(a => `
-      <li>
-        <button class="grow" data-play='{"artistID":${a.id}}'>${esc(a.name)}</button>
-        <button class="icon" data-enq='{"artistID":${a.id}}' aria-label="Add ${esc(a.name)} to the queue">+</button>
-      </li>`).join('') + '</ul>'
-      : emptyState('No artists yet.', 'They appear once the library is scanned.');
-  }
-  if (view === 'discover') {
-    const sections = (await get('/discover')) || [];
-    listing = sections.flatMap(s => s.tracks || []);
-    if (!sections.length) {
-      return m.innerHTML = emptyState('Nothing to suggest yet.',
-        'Discover ranks your own library using what you actually play. Listen to a few things and come back.');
-    }
-    let offset = 0;
-    return m.innerHTML = sections.map(sec => {
-      const html = `<h2>${esc(sec.title)}</h2>
-        <p class="sub">${esc(sec.reason)}</p>
-        ${trackList(sec.tracks, {offset})}`;
-      offset += sec.tracks.length;
-      return html;
-    }).join('');
+    const r = (await get(`/albums?limit=${PAGE}&offset=${page * PAGE}`)) || {};
+    const albums = r.albums || [];
+    return m.innerHTML = `<h2>Your library</h2>
+      <p class="sub">Every album on disk, by artist.</p>
+      ${albumGrid(albums)}
+      ${pager((page + 1) * PAGE < (r.total || 0), r.total)}`;
   }
   if (view === 'radio') {
     listing = [];
     const q = $('#q').value.trim();
-    const stations = (await get('/radio?limit=40' + (q ? '&q=' + encodeURIComponent(q) : ''))) || [];
+    const r = (await get(`/radio?limit=${PAGE}&offset=${page * PAGE}` +
+      (q ? '&q=' + encodeURIComponent(q) : ''))) || {};
+    const stations = r.stations || [];
     return m.innerHTML = stations.length ? `
       <h2>${q ? 'Stations matching ' + esc(q) : 'Most played stations'}</h2>
       <p class="sub">Full-length music from licensed broadcasters. Nothing is downloaded,
@@ -211,59 +441,74 @@ async function render() {
               st.tags ? ' · ' + esc(st.tags.split(',').slice(0, 2).join(', ')) : ''}</span>
           </button>
           <span class="meta">${st.codec} ${st.bitrate}k</span>
-        </li>`).join('')}</ul>`
-      : emptyState('No stations found.',
-          q ? 'Try a different name, or clear the search to see the most played stations.'
-            : 'The station directory could not be reached.');
+        </li>`).join('')}</ul>
+      ${pager(r.more)}`
+      : (page > 0
+          ? `<p class="sub">No more stations.</p>${pager(false)}`
+          : emptyState('No stations found.',
+              q ? 'Try a different name, or clear the search to see the most played stations.'
+                : 'The station directory could not be reached.'));
   }
   if (view === 'find') {
     listing = [];
-    return m.innerHTML = `
-      <h2>Search the catalogue</h2>
-      <p class="sub">Albums from MusicBrainz — no account, no limit. Tracks you own
-        play from your library; the rest are looked up in an external source.</p>
-      <input class="path" id="cat-q" placeholder="artist, album, or both">
-      <div><button class="action" id="cat-go">Search</button></div>
-      <div id="cat-result"></div>
-`;
+    // Both come from endpoints the other views already use; Find is an
+    // arrangement of them, not a new source.
+    const [pls, sections] = await Promise.all([get('/playlists'), get('/home')]);
+    const lists = pls || [];
+
+    // The rows worth surfacing here are the ones that suggest something, as
+    // opposed to the ones that merely list what is already on disk.
+    const suggest = (sections || []).filter(sec =>
+      ['Because of what you play', 'New releases', 'Trending this week'].includes(sec.title));
+
+    const playlists = lists.length ? `
+      <h2>Your playlists</h2>
+      <p class="sub">${lists.length} playlist${lists.length === 1 ? '' : 's'}${
+        lists.length > 8 ? ` <button class="linky" data-view-all="playlists">See all</button>` : ''}</p>
+      <ul>${lists.slice(0, 8).map(p => `
+        <li>
+          <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
+          <span class="meta">${p.trackCount} tracks</span>
+          <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">${ICON.play}</button>
+          <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
+        </li>`).join('')}</ul>`
+      : `<h2>Your playlists</h2>
+         <p class="sub">None yet. Create one in Playlists, or import your Spotify
+           account in Settings.</p>`;
+
+    const recs = suggest.length
+      ? suggest.map(sec => `<h2>${esc(sec.title)}</h2>
+          <p class="sub">${esc(sec.reason)}</p>
+          ${albumRow(sec.albums)}`).join('')
+      : `<h2>Nothing to suggest yet</h2>
+         <p class="sub">Recommendations are built from what you actually finish
+           listening to. Play a few things and they appear here.</p>`;
+
+    return m.innerHTML = playlists + recs;
   }
   if (view === 'likes') {
     listing = (await get('/likes')) || [];
-    return m.innerHTML = trackList(listing);
+    return m.innerHTML = pagedList(listing);
   }
   if (view === 'queue') {
     listing = state.queue || [];
-    return m.innerHTML = trackList(listing, {queue: true});
+    // The page holding what is playing, so the queue does not open on page 1
+    // while track 300 is in the speakers.
+    if (state.index >= 0) page = Math.floor(state.index / PAGE);
+    return m.innerHTML = pagedList(listing, {queue: true});
   }
   if (view === 'playlists') {
     const ls = (await get('/playlists')) || [];
     listing = [];
-    return m.innerHTML = `<button class="action" id="newpl">New playlist</button>` + (ls.length ? '<ul>' + ls.map(p => `
+    return m.innerHTML = `<button class="action" id="newpl">New playlist</button>` + (ls.length ? '<ul>' + slice(ls).map(p => `
       <li>
         <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
         <span class="meta">${p.trackCount} tracks</span>
         <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">▶</button>
         <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
         <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">✕</button>
-      </li>`).join('') + '</ul>'
-      : emptyState('No playlists yet.', 'Create one, or import them from Spotify in Settings.'));
-  }
-  if (view === 'search') {
-    const q = $('#q').value;
-    const [r, src] = await Promise.all([get('/search?q=' + encodeURIComponent(q)), get('/source')]);
-    listing = r?.tracks || [];
-    const local =
-      (r?.albums?.length ? '<h2>Albums</h2>' + albumGrid(r.albums) : '') +
-      (r?.tracks?.length ? '<h2>Tracks</h2>' + trackList(r.tracks) : '');
-    const online = src?.providers?.length
-      ? `<h2>Not in your library</h2>
-         <p class="sub">Search ${src.providers.join(', ')} for “${esc(q)}”. Nothing is downloaded;
-            the stream is resolved when you press play and thrown away afterwards.</p>
-         <button class="action" id="find-online" data-q="${esc(q)}">Search online</button>
-         <div id="online"></div>`
-      : '';
-    return m.innerHTML = (local || emptyState('Nothing in your library matches.',
-      src?.providers?.length ? 'You can still look outside it.' : 'Try another spelling.')) + online;
+      </li>`).join('') + '</ul>' + pager((page + 1) * PAGE < ls.length, ls.length)
+      : emptyState('No playlists yet.', 'Connect your Spotify account in Settings, or create one here.'));
   }
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
@@ -286,63 +531,86 @@ function scanPanel(scan) {
 
 
 
+// The Spotify panel has three states, and each one says what can be done next
+// rather than showing a button that would fail.
+function spotifyPanel(sp) {
+  const fallback = `
+    <details>
+      <summary class="sub">No developer app? Import without one</summary>
+      <ol class="steps">
+        <li>Press <strong>Copy script</strong>.</li>
+        <li>Open <a href="https://open.spotify.com" target="_blank" rel="noreferrer">open.spotify.com</a>, logged in.</li>
+        <li>F12 → Console, paste, Enter. Chrome asks you to type <code>allow pasting</code> the first time.</li>
+      </ol>
+      <button class="action" id="copyconnect">Copy script</button>
+      <span class="sub" id="copiedmsg"></span>
+    </details>`;
+
+  if (!sp) return '';
+  if (!sp.configured) {
+    return `<p class="sub">No client id is set, so the account cannot be linked.
+      Start Plectra with <code>-spotify-id</code>, or put <code>SPOTIFY_CLIENT_ID</code>
+      in <code>.env</code>. Creating the app is free at
+      <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">developer.spotify.com</a>.</p>
+      ${fallback}`;
+  }
+  if (!sp.connected) {
+    return `<p class="sub">Links your account so playlists and Liked Songs can be read.
+      Read-only: Plectra cannot change anything in your Spotify account, and no
+      password is ever seen. Register the redirect URI Plectra prints at startup first.</p>
+      <a class="action" href="/api/spotify/login">Connect account</a>
+      ${fallback}`;
+  }
+  return `<p class="meta">Connected${sp.account ? ' as ' + esc(sp.account) : ''}</p>
+    <p class="sub">Only songs whose files are in your library are kept; the rest are
+      listed so you know what is missing. Sync local music first for the best match.</p>
+    <button class="action" id="spimport">Import playlists</button>
+    <button class="action" id="spout">Disconnect</button>
+    <div id="spresult" class="sub"></div>`;
+}
+
 async function settingsPanel() {
-  const [enrich, hist, scan] = await Promise.all([
-    get('/enrich'), get('/history'), get('/library/scan'),
-  ]);
+  const [scan, sp] = await Promise.all([get('/library/scan'), get('/spotify')]);
   return `
     <h2>Local music</h2>
     ${scanPanel(scan)}
 
-    <h2>Metadata</h2>
-    ${enrich
-      ? `<p class="meta">${enrich.pending} pending · ${enrich.done} done · ${enrich.failed} failed</p>
-         <button class="action" id="enrich">Run enrichment</button>
-         <button class="action" id="reenrich">Re-run everything</button>`
-      : `<p class="empty">Enrichment is off. Start with <code>-enrich</code> to turn it on.</p>`}
-    <div id="enrichresult" class="sub"></div>
-
-    <h2>Listening history</h2>
-    ${hist
-      ? `<p class="meta">${hist.total} plays recorded here${hist.unmatched ? ` · ${hist.unmatched} unmatched` : ''}</p>`
-      : ''}
-    <p class="sub">Recorded locally as you listen. It is what Discover ranks on.</p>
-    ${hist && hist.unmatched ? '<button class="action" id="rematch">Rematch unmatched</button><div id="histresult" class="sub"></div>' : ''}
-
+    <h2>Spotify</h2>
+    ${spotifyPanel(sp)}
 `;
 }
 
 /* ---- interaction ---- */
 
 $('#main').addEventListener('click', onMainClick);
+
+// The dropdown is mounted in the header, not in #main, so it carries its own
+// listener rather than widening the main one.
+drop.addEventListener('click', async e => {
+  const t = e.target.closest('[data-hit-track]');
+  if (t) {
+    closeDrop();
+    return post('/player/play', {trackIDs: [Number(t.dataset.hitTrack)]});
+  }
+  const local = e.target.closest('[data-open-album]');
+  if (local) {
+    closeDrop();
+    return openAlbum(local.dataset.openAlbum);
+  }
+  const cat = e.target.closest('[data-open-mb]');
+  if (cat) {
+    closeDrop();
+    return openCatalogueAlbum(JSON.parse(cat.dataset.openMb));
+  }
+});
 $('#main').addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-play]')) {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-play], [data-open-album], [data-open-mb]')) {
     e.preventDefault();
     onMainClick(e);
   }
 });
 
 async function onMainClick(e) {
-  const album = e.target.closest('[data-album]');
-  if (album) {
-    const box = $('#album-tracks');
-    box.innerHTML = busy('Reading the track listing…');
-    const tracks = (await get('/browse/album?id=' + encodeURIComponent(album.dataset.album))) || [];
-    if (!tracks.length) return box.innerHTML = '<p class="sub">No track listing published for this album.</p>';
-    box.innerHTML = '<ul>' + tracks.map(t => `
-      <li>
-        <span class="no">${t.position || ''}</span>
-        <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
-          ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
-        </button>
-        <span class="dur">${mmss(t.durationMs)}</span>
-        <span class="meta">${t.localId ? 'library' : 'external'}</span>
-        ${t.localId ? `<button class="icon" data-enq='{"trackIDs":[${t.localId}]}'
-              aria-label="Add ${esc(t.title)} to the queue">+</button>` : ''}
-      </li>`).join('') + '</ul>';
-    return;
-  }
-
   // A track from a Spotify playlist: play the local file when there is one,
   // otherwise find it externally and play the best candidate.
   const sp = e.target.closest('[data-sp]');
@@ -364,16 +632,6 @@ async function onMainClick(e) {
     return;
   }
 
-  const cand = e.target.closest('[data-candidate]');
-  if (cand) {
-    const el = cand.closest('#online, #sp-result') || $('#online');
-    if (el) el.insertAdjacentHTML('afterbegin', `<div id="resolving">${busy('Resolving the stream…')}</div>`);
-    const resp = await post('/source/play', JSON.parse(cand.dataset.candidate));
-    document.querySelector('#resolving')?.remove();
-    if (!resp.ok && el) el.insertAdjacentHTML('afterbegin', `<p class="sub">${esc(await resp.text())}</p>`);
-    return;
-  }
-
   const station = e.target.closest('[data-station]');
   if (station) return post('/radio/play', JSON.parse(station.dataset.station));
 
@@ -390,8 +648,31 @@ async function onMainClick(e) {
     return;
   }
 
+  const pg = e.target.closest('[data-page]');
+  if (pg) {
+    page = Math.max(0, Number(pg.dataset.page));
+    await repaint();
+    $('#main').scrollIntoView({block: 'start'});
+    return;
+  }
+
+  const all = e.target.closest('[data-view-all]');
+  if (all) {
+    view = all.dataset.viewAll;
+    page = 0;
+    return render();
+  }
+
   const play = e.target.closest('[data-play]');
   if (play) return post('/player/play', JSON.parse(play.dataset.play));
+
+  // Checked after the card's own buttons, which sit inside it: a click on Play
+  // must not also open the album behind it.
+  const card = e.target.closest('[data-open-album]');
+  if (card) return openAlbum(card.dataset.openAlbum);
+
+  const mb = e.target.closest('[data-open-mb]');
+  if (mb) return openCatalogueAlbum(JSON.parse(mb.dataset.openMb));
 
   const row = e.target.closest('[data-index]');
   if (row) {
@@ -411,8 +692,12 @@ async function onMainClick(e) {
   const open = e.target.closest('[data-open]');
   if (open) {
     playlistID = Number(open.dataset.open);
-    listing = (await get('/playlists/' + playlistID)) || [];
-    $('#main').innerHTML = trackList(listing, {playlist: true});
+    page = 0;
+    repaint = async () => {
+      listing = (await get('/playlists/' + playlistID)) || [];
+      $('#main').innerHTML = pagedList(listing, {playlist: true});
+    };
+    await repaint();
     return;
   }
 
@@ -420,7 +705,7 @@ async function onMainClick(e) {
   if (rm && playlistID) {
     await del(`/playlists/${playlistID}/tracks/${rm.dataset.remove}`);
     listing = (await get('/playlists/' + playlistID)) || [];
-    $('#main').innerHTML = trackList(listing, {playlist: true});
+    $('#main').innerHTML = pagedList(listing, {playlist: true});
     return;
   }
 
@@ -433,40 +718,6 @@ async function onMainClick(e) {
     return;
   }
 
-  if (e.target.id === 'find-online') {
-    const q = e.target.dataset.q || '';
-    e.target.disabled = true;
-    $('#online').innerHTML = busy('Searching external sources — this asks yt-dlp, so give it a moment.');
-    const found = (await get('/source/find?title=' + encodeURIComponent(q))) || [];
-    e.target.disabled = false;
-    if (!found.length) return $('#online').innerHTML = '<p class="sub">No results.</p>';
-    $('#online').innerHTML = '<ul>' + found.map(c => `
-      <li>
-        <button class="grow" data-candidate='${esc(JSON.stringify(c))}'>
-          ${esc(c.title)} <span class="sub">— ${esc(c.artist)}</span>
-        </button>
-        <span class="dur">${mmss(c.durationMs)}</span>
-        <span class="meta">${esc(c.provider)}</span>
-      </li>`).join('') + '</ul>';
-    return;
-  }
-  if (e.target.id === 'cat-go') {
-    const q = $('#cat-q').value.trim();
-    if (!q) return $('#cat-result').innerHTML = '<p class="sub">Type something to search for.</p>';
-    e.target.disabled = true;
-    $('#cat-result').innerHTML = busy('Searching MusicBrainz…');
-    const albums = (await get('/browse?q=' + encodeURIComponent(q) + '&limit=20')) || [];
-    e.target.disabled = false;
-    if (!albums.length) return $('#cat-result').innerHTML = '<p class="sub">Nothing found.</p>';
-    $('#cat-result').innerHTML = '<ul>' + albums.map(a => `
-      <li>
-        <button class="grow" data-album="${esc(a.id)}">
-          ${esc(a.title)} <span class="sub">— ${esc(a.artist)}</span>
-        </button>
-        <span class="meta">${a.year || ''} ${esc(a.type || '')}</span>
-      </li>`).join('') + '</ul><div id="album-tracks"></div>';
-    return;
-  }
   if (e.target.id === 'scan') {
     e.target.disabled = true;
     $('#scanwhen').textContent = 'Scanning…';
@@ -482,16 +733,37 @@ async function onMainClick(e) {
     }, 700);
     return;
   }
-  if (e.target.id === 'enrich' || e.target.id === 'reenrich') {
-    const force = e.target.id === 'reenrich' ? '?force=1' : '';
-    const r = await (await fetch('/api/enrich' + force, {method: 'POST'})).json();
-    $('#enrichresult').textContent = `${r.queued} jobs queued — this runs in the background.`;
+  if (e.target.id === 'spimport') {
+    e.target.disabled = true;
+    $('#spresult').innerHTML = busy('Reading your Spotify playlists — a large account takes a moment.');
+    const resp = await fetch('/api/spotify/import', {method: 'POST'});
+    e.target.disabled = false;
+    if (!resp.ok) return $('#spresult').textContent = await resp.text();
+    const r = await resp.json();
+    $('#spresult').innerHTML =
+      `${r.playlists} playlists created, ${r.matched} tracks matched, ${r.liked} liked.` +
+      (r.refused?.length ? `<br>Spotify would not serve: ${esc(r.refused.join(', '))} — its own editorial playlists are closed to apps registered after Nov 2024.` : '') +
+      (r.empty?.length ? `<br>Nothing local in: ${esc(r.empty.join(', '))}` : '') +
+      (r.unmatched?.length ? `<br>${r.unmatched.length} tracks are not in your library yet.` : '');
     return;
   }
 
-  if (e.target.id === 'rematch') {
-    const r = await (await fetch('/api/history/rematch', {method: 'POST'})).json();
-    $('#histresult').textContent = `${r.claimed} plays claimed by tracks in your library.`;
+  if (e.target.id === 'spout') {
+    await del('/spotify');
+    return render();
+  }
+
+  if (e.target.id === 'copyconnect') {
+    // The script has to know where to post, and the page it is copied from is
+    // the only thing that reliably knows Plectra's own address.
+    const js = (await (await fetch('/connect.js')).text())
+      .replace('__PLECTRA_ORIGIN__', location.origin);
+    try {
+      await navigator.clipboard.writeText(js);
+      $('#copiedmsg').textContent = 'Copied — paste it into the Spotify console.';
+    } catch (err) {
+      $('#copiedmsg').textContent = `Clipboard blocked. Open ${location.origin}/connect.js and copy it by hand.`;
+    }
     return;
   }
 
@@ -510,6 +782,8 @@ function flash(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.hidden = true, 1800);
 }
+
+$('#q').parentElement.append(drop);
 
 const menu = Object.assign(document.createElement('div'), {className: 'menu', hidden: true});
 menu.setAttribute('role', 'menu');
@@ -550,6 +824,12 @@ function actionsFor(target) {
   const acts = [];
   const pick = sel => host.matches(sel) ? host : host.querySelector(sel);
 
+  const alb = pick('[data-open-album]');
+  if (alb) acts.push({label: 'Open album', run: () => openAlbum(alb.dataset.openAlbum)});
+
+  const mbc = pick('[data-open-mb]');
+  if (mbc) acts.push({label: 'Open album', run: () => openCatalogueAlbum(JSON.parse(mbc.dataset.openMb))});
+
   const p = pick('[data-play]');
   if (p) {
     const body = JSON.parse(p.dataset.play);
@@ -582,16 +862,13 @@ function actionsFor(target) {
       if (playlistID) acts.push({label: 'Remove from playlist', run: async () => {
         await del(`/playlists/${playlistID}/tracks/${t.id}`);
         listing = (await get('/playlists/' + playlistID)) || [];
-        $('#main').innerHTML = trackList(listing, {playlist: true});
+        $('#main').innerHTML = pagedList(listing, {playlist: true});
       }});
     }
   }
 
   const st = pick('[data-station]');
   if (st) acts.push({label: 'Play station', run: () => post('/radio/play', JSON.parse(st.dataset.station))});
-
-  const cd = pick('[data-candidate]');
-  if (cd) acts.push({label: 'Play from source', run: () => post('/source/play', JSON.parse(cd.dataset.candidate))});
 
   const sp = pick('[data-sp]');
   if (sp) {
@@ -638,18 +915,26 @@ $('#main').addEventListener('contextmenu', e => {
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   view = b.dataset.view;
+  page = 0;
   $('#q').value = '';
   document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-current', String(x === b)));
   render();
 });
 
+// Radio keeps searching its own directory in place; everything else answers in
+// the dropdown, so typing never throws away the screen you were looking at.
 $('#q').oninput = () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    if (view !== 'radio') view = $('#q').value.trim() ? 'search' : 'albums';
-    render();
+    if (view === 'radio') {
+      page = 0;
+      return render();
+    }
+    suggest($('#q').value.trim());
   }, 300);
 };
+$('#q').onblur = () => setTimeout(closeDrop, 150); // let a click on a hit land first
+addEventListener('keydown', e => { if (e.key === 'Escape') closeDrop(); });
 
 $('#toggle').onclick = () => post(state.playing ? '/player/pause' : '/player/resume');
 $('#prev').onclick = () => post('/player/prev');
@@ -721,6 +1006,22 @@ new EventSource('/api/events').onmessage = e => {
   paint();
   if (view === 'queue' && (state.index !== prevIndex || state.queue?.length !== prevLen)) render();
 };
+
+// Spotify sends the browser back to /#settings&spotify=… — land on the panel
+// the login started from and say how it went, rather than on a silent home page.
+(function spotifyLanding() {
+  const m = location.hash.match(/spotify=(.*)$/);
+  if (!m) return;
+  const outcome = decodeURIComponent(m[1]);
+  view = 'settings';
+  document.querySelectorAll('nav button').forEach(b =>
+    b.setAttribute('aria-current', String(b.dataset.view === 'settings')));
+  history.replaceState(null, '', location.pathname);
+  // Paint runs after render() below has replaced #main.
+  setTimeout(() => flash(outcome === 'connected'
+    ? 'Spotify account connected'
+    : 'Spotify: ' + outcome), 0);
+})();
 
 render();
 </script>

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
 // ArtistAffinity is how much one artist has actually been listened to, as
 // opposed to how much of them sits in the library.
@@ -107,4 +110,86 @@ func (s *Store) ArtistMBIDs(ctx context.Context) (map[string]string, error) {
 		out[name] = mbid
 	}
 	return out, rows.Err()
+}
+
+// albumSelect is shared by the play-ranked album queries below. The join to
+// artists is what turns an album row into something worth showing.
+const albumSelect = `SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+	FROM albums al
+	JOIN artists ar ON ar.id = al.artist_id`
+
+func (s *Store) scanAlbums(rows *sql.Rows) ([]Album, error) {
+	defer rows.Close()
+	out := []Album{}
+	for rows.Next() {
+		var a Album
+		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// RecentAlbums lists albums by when they were last listened to, most recent
+// first. An album counts as heard when any of its tracks played to the end.
+func (s *Store) RecentAlbums(ctx context.Context, limit int) ([]Album, error) {
+	rows, err := s.db.QueryContext(ctx, albumSelect+`
+		JOIN tracks t ON t.album_id = al.id
+		JOIN plays  p ON p.track_id = t.id AND p.completed = 1
+		GROUP BY al.id
+		ORDER BY MAX(p.played_at) DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanAlbums(rows)
+}
+
+// MostPlayedAlbums ranks albums by completed plays across their tracks. Ties
+// break on the more recent listening, so a stale favourite yields to a live one.
+func (s *Store) MostPlayedAlbums(ctx context.Context, limit int) ([]Album, error) {
+	rows, err := s.db.QueryContext(ctx, albumSelect+`
+		JOIN tracks t ON t.album_id = al.id
+		JOIN plays  p ON p.track_id = t.id AND p.completed = 1
+		GROUP BY al.id
+		ORDER BY COUNT(*) DESC, MAX(p.played_at) DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanAlbums(rows)
+}
+
+// NewestAlbums lists what the scanner added most recently. Rowid order is the
+// insertion order, which is the closest thing to "new to this library" without
+// a column that does not exist.
+func (s *Store) NewestAlbums(ctx context.Context, limit int) ([]Album, error) {
+	rows, err := s.db.QueryContext(ctx, albumSelect+`
+		ORDER BY al.id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanAlbums(rows)
+}
+
+// AlbumsOfTracks turns a list of tracks into the albums they belong to, keeping
+// the order the tracks arrived in and dropping repeats. Recommendations come
+// back as tracks; the home view shows albums.
+func (s *Store) AlbumsOfTracks(ctx context.Context, tracks []Track, limit int) ([]Album, error) {
+	out := []Album{}
+	seen := map[int64]bool{}
+	for _, t := range tracks {
+		if t.AlbumID == 0 || seen[t.AlbumID] || len(out) >= limit {
+			continue
+		}
+		seen[t.AlbumID] = true
+		al, err := s.Album(ctx, t.AlbumID)
+		if err != nil {
+			continue // the album went away between the two queries
+		}
+		out = append(out, al)
+	}
+	return out, nil
 }
