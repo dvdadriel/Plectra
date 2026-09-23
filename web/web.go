@@ -4,5 +4,5 @@ package web
 
 import "embed"
 
-//go:embed index.html style.css fonts
+//go:embed index.html style.css logo.png logo-white.png fonts
 var FS embed.FS

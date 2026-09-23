@@ -114,7 +114,8 @@ func (s *Store) ArtistMBIDs(ctx context.Context) (map[string]string, error) {
 
 // albumSelect is shared by the play-ranked album queries below. The join to
 // artists is what turns an album row into something worth showing.
-const albumSelect = `SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+const albumSelect = `SELECT al.id, al.title, ar.name, COALESCE(al.year,0),
+	       al.cover_path IS NOT NULL AND al.cover_path <> ''
 	FROM albums al
 	JOIN artists ar ON ar.id = al.artist_id`
 
@@ -123,7 +124,7 @@ func (s *Store) scanAlbums(rows *sql.Rows) ([]Album, error) {
 	out := []Album{}
 	for rows.Next() {
 		var a Album
-		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year); err != nil {
+		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year, &a.HasCover); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

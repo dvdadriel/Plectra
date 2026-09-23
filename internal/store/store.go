@@ -56,6 +56,10 @@ type Album struct {
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
 	Year   int    `json:"year"`
+	// HasCover lets the view skip requesting artwork that is not there. Most
+	// albums in a self-hosted library have none, and asking anyway costs a
+	// round trip and a 404 per sleeve.
+	HasCover bool `json:"hasCover"`
 }
 
 type Artist struct {
@@ -122,7 +126,8 @@ func (s *Store) KnownMTime(ctx context.Context, path string) (int64, bool) {
 
 func (s *Store) Albums(ctx context.Context) ([]Album, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0),
+		        al.cover_path IS NOT NULL AND al.cover_path <> ''
 		 FROM albums al JOIN artists ar ON ar.id = al.artist_id
 		 ORDER BY ar.name, al.year, al.title`)
 	if err != nil {
@@ -132,7 +137,7 @@ func (s *Store) Albums(ctx context.Context) ([]Album, error) {
 	out := []Album{}
 	for rows.Next() {
 		var a Album
-		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year); err != nil {
+		if err := rows.Scan(&a.ID, &a.Title, &a.Artist, &a.Year, &a.HasCover); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

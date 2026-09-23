@@ -44,14 +44,14 @@ func TestHomeLeavesOutSectionsWithNothingInThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, unwanted := range []string{"Pick up where you left off", "Played the most",
-		"New releases", "Trending this week"} {
+	for _, unwanted := range []string{"Still warm", "Worn thin",
+		"Out in the world", "Elsewhere this week"} {
 		if find(secs, unwanted) != nil {
 			t.Errorf("%q appeared with no listening and no charts: %v", unwanted, titles(secs))
 		}
 	}
 	// The library itself is there, so those two sections must be.
-	if find(secs, "Your library") == nil || find(secs, "Recently added") == nil {
+	if find(secs, "The whole shelf") == nil || find(secs, "New to the shelf") == nil {
 		t.Errorf("sections = %v, want the library ones", titles(secs))
 	}
 }
@@ -73,7 +73,7 @@ func TestHomeRanksAlbumsByListening(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recent := find(secs, "Pick up where you left off")
+	recent := find(secs, "Still warm")
 	if recent == nil || len(recent.Albums) == 0 {
 		t.Fatalf("no recent section: %v", titles(secs))
 	}
@@ -81,7 +81,7 @@ func TestHomeRanksAlbumsByListening(t *testing.T) {
 		t.Errorf("most recent album is by %q, want Tricky (played yesterday)", recent.Albums[0].Artist)
 	}
 
-	top := find(secs, "Played the most")
+	top := find(secs, "Worn thin")
 	if top == nil || len(top.Albums) == 0 {
 		t.Fatalf("no most-played section: %v", titles(secs))
 	}
@@ -108,10 +108,10 @@ func TestHomeIncludesChartsAndSurvivesThemFailing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := find(secs, "Trending this week"); s == nil || s.Albums[0].Title != "Proof" {
+	if s := find(secs, "Elsewhere this week"); s == nil || s.Albums[0].Title != "Proof" {
 		t.Errorf("trending section missing or wrong: %v", titles(secs))
 	}
-	if s := find(secs, "New releases"); s == nil || s.Albums[0].Title != "Big" {
+	if s := find(secs, "Out in the world"); s == nil || s.Albums[0].Title != "Big" {
 		t.Errorf("new releases section missing or wrong: %v", titles(secs))
 	}
 
@@ -121,10 +121,10 @@ func TestHomeIncludesChartsAndSurvivesThemFailing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a failing chart broke the whole home view: %v", err)
 	}
-	if find(secs, "Your library") == nil {
+	if find(secs, "The whole shelf") == nil {
 		t.Errorf("local sections vanished with the charts: %v", titles(secs))
 	}
-	if find(secs, "Trending this week") != nil {
+	if find(secs, "Elsewhere this week") != nil {
 		t.Errorf("a failed chart still produced a section: %v", titles(secs))
 	}
 }
@@ -151,7 +151,7 @@ func TestEverySectionSaysWhyItIsThere(t *testing.T) {
 	}
 }
 
-// "Because of what you play" must not appear before anything has been played.
+// "Out of your own history" must not appear before anything has been played.
 // Sections() also returns a never-played band, which exists for a silent
 // library too, so the row would otherwise carry a heading that is untrue.
 func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
@@ -161,7 +161,7 @@ func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if find(secs, "Because of what you play") != nil {
+	if find(secs, "Out of your own history") != nil {
 		t.Errorf("a taste row appeared with no listening at all: %v", titles(secs))
 	}
 
@@ -171,7 +171,7 @@ func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if find(secs, "Because of what you play") == nil {
+	if find(secs, "Out of your own history") == nil {
 		t.Errorf("no taste row after a completed play: %v", titles(secs))
 	}
 }

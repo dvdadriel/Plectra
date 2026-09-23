@@ -43,6 +43,7 @@ func local(albums []store.Album) []chart.Album {
 	for _, a := range albums {
 		out = append(out, chart.Album{
 			LocalID: a.ID, Title: a.Title, Artist: a.Artist, Year: a.Year,
+			HasCover: a.HasCover,
 		})
 	}
 	return out
@@ -61,8 +62,8 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 	}
 
 	if al, err := s.st.RecentAlbums(ctx, perRow); err == nil {
-		add("Pick up where you left off",
-			"The albums you listened to most recently.", local(al))
+		add("Still warm",
+			"The albums you finished most recently.", local(al))
 	}
 
 	// Recommendations are built from tracks, then collapsed to their albums.
@@ -79,18 +80,18 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 				tracks = append(tracks, sec.Tracks...)
 			}
 			if al, err := s.st.AlbumsOfTracks(ctx, tracks, perRow); err == nil {
-				add("Because of what you play",
-					"Ranked from your own listening, filtered to albums you own.", local(al))
+				add("Out of your own history",
+					"Ranked from what you have played, narrowed to albums on your disk.", local(al))
 			}
 		}
 	}
 
 	if al, err := s.st.MostPlayedAlbums(ctx, perRow); err == nil {
-		add("Played the most", "Your own top albums, by completed plays.", local(al))
+		add("Worn thin", "The albums with the most finished plays.", local(al))
 	}
 
 	if al, err := s.st.NewestAlbums(ctx, perRow); err == nil {
-		add("Recently added", "The last albums the scanner found on disk.", local(al))
+		add("New to the shelf", "The last albums the scanner found on disk, newest first.", local(al))
 	}
 
 	// Capped like every other row. The whole library has its own paged view;
@@ -101,8 +102,8 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 			al = al[:perRow]
 		}
 		sec := AlbumSection{
-			Title:  "Your library",
-			Reason: "Everything on disk.",
+			Title:  "The whole shelf",
+			Reason: "Every album on disk, by artist.",
 			Albums: local(al),
 			Total:  total,
 			More:   "albums",
@@ -116,12 +117,16 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 		if al, err := s.charts.New(ctx, perRow); err != nil {
 			log.Printf("home: new releases: %v", err)
 		} else {
-			add("New releases", "Out in the last two weeks, by how much they are being played.", al)
+			add("Out in the world",
+				"Released in the last two weeks and ranked by ListenBrainz listens — not in "+
+					"your library, so playing one takes a moment to find a stream.", al)
 		}
 		if al, err := s.charts.Trending(ctx, perRow); err != nil {
 			log.Printf("home: trending: %v", err)
 		} else {
-			add("Trending this week", "What ListenBrainz listeners played most this week.", al)
+			add("Elsewhere this week",
+				"What ListenBrainz listeners played most these past seven days — none of "+
+					"it is on your disk.", al)
 		}
 	}
 

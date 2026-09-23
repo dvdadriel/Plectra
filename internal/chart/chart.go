@@ -35,6 +35,8 @@ type Album struct {
 	// in four to thirteen seconds, so it is fetched once and cached locally.
 	Cover string `json:"cover,omitempty"`
 	Year  int    `json:"year,omitempty"`
+	// HasCover mirrors the library's flag so one card template serves both.
+	HasCover bool `json:"hasCover,omitempty"`
 }
 
 type Client struct {

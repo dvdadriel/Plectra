@@ -399,9 +399,10 @@ func (s *Store) AlbumsByArtist(ctx context.Context, artistID int64) ([]Album, er
 func (s *Store) Album(ctx context.Context, id int64) (Album, error) {
 	var a Album
 	err := s.db.QueryRowContext(ctx,
-		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
+		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0),
+		        al.cover_path IS NOT NULL AND al.cover_path <> ''
 		 FROM albums al JOIN artists ar ON ar.id = al.artist_id WHERE al.id = ?`, id).
-		Scan(&a.ID, &a.Title, &a.Artist, &a.Year)
+		Scan(&a.ID, &a.Title, &a.Artist, &a.Year, &a.HasCover)
 	if err == sql.ErrNoRows {
 		return a, ErrNotFound
 	}
