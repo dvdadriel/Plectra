@@ -181,12 +181,7 @@ func (w *Worker) enrichAlbum(ctx context.Context, p Provider, id int64) error {
 	if !ok {
 		return nil // nothing found is an answer, not a failure worth retrying
 	}
-	if p.Name() == "spotify" {
-		err = w.st.UpdateAlbumMeta(ctx, id, "", best.ID, best.Year)
-	} else {
-		err = w.st.UpdateAlbumMeta(ctx, id, best.ID, "", best.Year)
-	}
-	if err != nil {
+	if err = w.st.UpdateAlbumMeta(ctx, id, best.ID, best.Year); err != nil {
 		return err
 	}
 	if a.Cover == "" && best.CoverURL != "" {
@@ -211,10 +206,7 @@ func (w *Worker) enrichArtist(ctx context.Context, p Provider, id int64) error {
 	if !ok {
 		return nil
 	}
-	if p.Name() == "spotify" {
-		return w.st.UpdateArtistMeta(ctx, id, "", best.ID)
-	}
-	return w.st.UpdateArtistMeta(ctx, id, best.ID, "")
+	return w.st.UpdateArtistMeta(ctx, id, best.ID)
 }
 
 // pick takes the highest-scoring match, and only if the provider is reasonably

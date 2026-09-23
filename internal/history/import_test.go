@@ -45,9 +45,9 @@ func TestRematchClaimsRowsAfterTrackEntersLibrary(t *testing.T) {
 
 	// Rows imported by an earlier version: no local track matched them then.
 	rows := []store.Play{
-		{PlayedAt: 1700000000, MSPlayed: 200000, Completed: true, Source: store.SourceSpotifyExport,
+		{PlayedAt: 1700000000, MSPlayed: 200000, Completed: true, Source: "an-old-import",
 			RawArtist: "Sigur Rós", RawTitle: "Hoppípolla"},
-		{PlayedAt: 1700003600, MSPlayed: 210000, Completed: true, Source: store.SourceSpotifyExport,
+		{PlayedAt: 1700003600, MSPlayed: 210000, Completed: true, Source: "an-old-import",
 			RawArtist: "Sigur Rós", RawTitle: "Hoppípolla (Live)"},
 	}
 	if n, err := st.ImportPlays(ctx, rows); err != nil || n != 2 {

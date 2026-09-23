@@ -710,7 +710,6 @@ button[disabled] { opacity: 0.6; cursor: default; }
   box-shadow: 0 8px 24px color-mix(in oklab, var(--navy) 28%, transparent);
 }
 
-
 /* The pager sits under a list, not inside it. */
 .pager {
   display: flex;

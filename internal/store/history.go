@@ -5,12 +5,9 @@ import (
 	"database/sql"
 )
 
-// Sources of a play row.
-const (
-	SourcePlectra       = "plectra"
-	SourceSpotifyExport = "spotify_export"
-	SourceSpotifyAPI    = "spotify_api"
-)
+// Sources of a play row. Only Plectra records plays today; the column stays
+// because rows imported by an earlier version still name theirs.
+const SourcePlectra = "plectra"
 
 // ImportPlays writes imported history in one transaction. Rows that duplicate an
 // earlier import are skipped, and the count of genuinely new rows is returned.

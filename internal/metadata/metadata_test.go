@@ -245,7 +245,7 @@ type notReadyProvider struct{ stubProvider }
 
 func (n *notReadyProvider) Ready(context.Context) bool { return false }
 
-// A provider that cannot be used yet — Spotify with no account linked — must not
+// A provider that cannot be used yet — one with no credentials — must not
 // have work queued for it. Otherwise the queue fills with failures that waiting
 // will never fix.
 func TestSeedSkipsProvidersThatAreNotReady(t *testing.T) {

@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS artists (
     name       TEXT NOT NULL UNIQUE,
     sort_name  TEXT NOT NULL DEFAULT '',
     mbid       TEXT,
-    spotify_id TEXT,
     image_path TEXT
 );
 
@@ -17,7 +16,6 @@ CREATE TABLE IF NOT EXISTS albums (
     artist_id  INTEGER NOT NULL REFERENCES artists(id),
     year       INTEGER,
     mbid       TEXT,
-    spotify_id TEXT,
     cover_path TEXT,
     disc_count INTEGER NOT NULL DEFAULT 1,
     UNIQUE (title, artist_id)
@@ -41,7 +39,6 @@ CREATE TABLE IF NOT EXISTS tracks (
     replaygain_track REAL,
     replaygain_album REAL,
     mbid             TEXT,
-    spotify_id       TEXT,
     added_at         INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album_id, disc_no, track_no);
@@ -126,7 +123,7 @@ CREATE TABLE IF NOT EXISTS enrich_jobs (
     id          INTEGER PRIMARY KEY,
     entity_type TEXT NOT NULL,              -- 'album' | 'artist' | 'track'
     entity_id   INTEGER NOT NULL,
-    provider    TEXT NOT NULL,              -- 'musicbrainz' | 'spotify'
+    provider    TEXT NOT NULL,              -- 'musicbrainz'
     state       TEXT NOT NULL DEFAULT 'pending', -- pending | done | failed
     attempts    INTEGER NOT NULL DEFAULT 0,
     last_error  TEXT,
@@ -134,14 +131,6 @@ CREATE TABLE IF NOT EXISTS enrich_jobs (
     UNIQUE (entity_type, entity_id, provider)
 );
 CREATE INDEX IF NOT EXISTS enrich_due ON enrich_jobs(state, next_run_at);
-
--- Spotify tokens live in the database so a restart does not force a re-login.
-CREATE TABLE IF NOT EXISTS oauth_tokens (
-    provider      TEXT PRIMARY KEY,
-    access_token  TEXT NOT NULL,
-    refresh_token TEXT NOT NULL,
-    expires_at    INTEGER NOT NULL
-);
 
 -- Imported history is deduplicated on re-import: the same export applied twice
 -- must not double every statistic. Local plays are exempt — two genuine listens

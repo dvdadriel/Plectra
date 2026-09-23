@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// MusicBrainz is the canonical metadata source. Spotify only supplements it.
+// MusicBrainz is the metadata source.
 type MusicBrainz struct {
 	BaseURL string
 	Client  *http.Client

@@ -149,13 +149,12 @@ func (s *Store) AlbumForEnrich(ctx context.Context, id int64) (AlbumForEnrich, e
 
 // UpdateAlbumMeta writes provider results back. Empty values are left alone, so a
 // second provider cannot erase what the first one found.
-func (s *Store) UpdateAlbumMeta(ctx context.Context, id int64, mbid, spotifyID string, year int) error {
+func (s *Store) UpdateAlbumMeta(ctx context.Context, id int64, mbid string, year int) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE albums SET
 		     mbid = COALESCE(NULLIF(?, ''), mbid),
-		     spotify_id = COALESCE(NULLIF(?, ''), spotify_id),
 		     year = COALESCE(NULLIF(?, 0), year)
-		 WHERE id = ?`, mbid, spotifyID, year, id)
+		 WHERE id = ?`, mbid, year, id)
 	return err
 }
 
@@ -177,31 +176,22 @@ func (s *Store) ArtistForEnrich(ctx context.Context, id int64) (ArtistForEnrich,
 	return a, err
 }
 
-func (s *Store) UpdateArtistMeta(ctx context.Context, id int64, mbid, spotifyID string) error {
+func (s *Store) UpdateArtistMeta(ctx context.Context, id int64, mbid string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE artists SET
 		     mbid = COALESCE(NULLIF(?, ''), mbid),
-		     spotify_id = COALESCE(NULLIF(?, ''), spotify_id)
-		 WHERE id = ?`, mbid, spotifyID, id)
+		 WHERE id = ?`, mbid, id)
 	return err
 }
 
 // AlbumIDsWithout lists albums missing an identifier from the given provider,
 // which is what the enrichment queue is seeded from.
 func (s *Store) AlbumIDsWithout(ctx context.Context, provider string) ([]int64, error) {
-	col := "mbid"
-	if provider == "spotify" {
-		col = "spotify_id"
-	}
-	return s.ids(ctx, `SELECT id FROM albums WHERE `+col+` IS NULL OR `+col+` = ''`)
+	return s.ids(ctx, `SELECT id FROM albums WHERE mbid IS NULL OR mbid = ''`)
 }
 
 func (s *Store) ArtistIDsWithout(ctx context.Context, provider string) ([]int64, error) {
-	col := "mbid"
-	if provider == "spotify" {
-		col = "spotify_id"
-	}
-	return s.ids(ctx, `SELECT id FROM artists WHERE `+col+` IS NULL OR `+col+` = ''`)
+	return s.ids(ctx, `SELECT id FROM artists WHERE mbid IS NULL OR mbid = ''`)
 }
 
 func (s *Store) ids(ctx context.Context, query string, args ...any) ([]int64, error) {
