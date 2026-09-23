@@ -81,8 +81,7 @@ CREATE TABLE IF NOT EXISTS plays (
     source           TEXT NOT NULL,
     raw_artist       TEXT,
     raw_album        TEXT,
-    raw_title        TEXT,
-    spotify_track_id TEXT
+    raw_title        TEXT
 );
 CREATE INDEX IF NOT EXISTS plays_track ON plays(track_id, played_at);
 CREATE INDEX IF NOT EXISTS plays_time  ON plays(played_at);

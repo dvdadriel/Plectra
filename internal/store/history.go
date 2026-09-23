@@ -25,8 +25,8 @@ func (s *Store) ImportPlays(ctx context.Context, plays []Play) (int, error) {
 
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO plays (track_id, played_at, ms_played, completed, source,
-		                    raw_artist, raw_album, raw_title, spotify_track_id)
-		 VALUES (?,?,?,?,?,?,?,?,?)
+		                    raw_artist, raw_album, raw_title)
+		 VALUES (?,?,?,?,?,?,?,?)
 		 ON CONFLICT DO NOTHING`)
 	if err != nil {
 		return 0, err
@@ -40,7 +40,7 @@ func (s *Store) ImportPlays(ctx context.Context, plays []Play) (int, error) {
 			trackID = p.TrackID
 		}
 		res, err := stmt.ExecContext(ctx, trackID, p.PlayedAt, p.MSPlayed, p.Completed,
-			p.Source, p.RawArtist, p.RawAlbum, p.RawTitle, nullString(p.SpotifyTrackID))
+			p.Source, p.RawArtist, p.RawAlbum, p.RawTitle)
 		if err != nil {
 			return added, err
 		}
@@ -49,13 +49,6 @@ func (s *Store) ImportPlays(ctx context.Context, plays []Play) (int, error) {
 		}
 	}
 	return added, tx.Commit()
-}
-
-func nullString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // UnmatchedPlay is an imported row that found no local track.

@@ -30,7 +30,6 @@ import (
 	"github.com/plectra/plectra/internal/playlist"
 	"github.com/plectra/plectra/internal/radio"
 	"github.com/plectra/plectra/internal/source"
-	"github.com/plectra/plectra/internal/spotify"
 	"github.com/plectra/plectra/internal/store"
 	"github.com/plectra/plectra/web"
 )
@@ -47,7 +46,6 @@ func main() {
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
 	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz")
-	spotifyID := flag.String("spotify-id", "", "Spotify client id; empty disables the account panel")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
 	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
@@ -150,17 +148,6 @@ func main() {
 		WithSources(sources).
 		WithBrowser(browse.New()).
 		WithFastBrowser(browse.NewDeezer())
-
-	// Spotify is a source of playlists, never of audio. PKCE means a client id
-	// is enough — no secret is stored anywhere.
-	if id := firstEnv("SPOTIFY_CLIENT_ID", "spotify-client-id"); *spotifyID == "" {
-		*spotifyID = id
-	}
-	if *spotifyID != "" {
-		redirect := "http://" + *addr + "/api/spotify/callback"
-		api = api.WithSpotify(spotify.New(st, *spotifyID, redirect))
-		log.Printf("spotify: register this redirect URI in your app dashboard: %s", redirect)
-	}
 
 	handler := api.Handler()
 

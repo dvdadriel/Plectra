@@ -19,16 +19,15 @@ type API struct {
 	cat         *catalog.Catalog
 	pl          *player.Player
 	lists       *playlist.Service
-	enrich      Enricher       // nil when no metadata provider is configured
-	history     History        // nil when history routes are not wired
-	library     Library        // nil when no scanner is wired
-	discover    Discovery      // nil when recommendations are off
-	radio       Radio          // nil when the station directory is unavailable
-	sources     Sources        // nil when no external source is configured
-	browser     Browser        // nil when catalogue search is off
-	fastBrowser Browser        // nil when the search-as-you-type catalogue is off
-	spotify     SpotifyAccount // nil when no Spotify client id is configured
-	covers      *remoteCovers  // nil when no cover directory is configured
+	enrich      Enricher      // nil when no metadata provider is configured
+	history     History       // nil when history routes are not wired
+	library     Library       // nil when no scanner is wired
+	discover    Discovery     // nil when recommendations are off
+	radio       Radio         // nil when the station directory is unavailable
+	sources     Sources       // nil when no external source is configured
+	browser     Browser       // nil when catalogue search is off
+	fastBrowser Browser       // nil when the search-as-you-type catalogue is off
+	covers      *remoteCovers // nil when no cover directory is configured
 	web         fs.FS
 }
 
@@ -62,8 +61,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", a.search)
 	mux.HandleFunc("GET /api/cover/{id}", a.cover)
 
-	mux.HandleFunc("POST /api/playlists/import", a.importPlaylists)
-	mux.HandleFunc("OPTIONS /api/playlists/import", a.importPreflight)
 	mux.HandleFunc("GET /api/playlists", a.playlists)
 	mux.HandleFunc("POST /api/playlists", a.createPlaylist)
 	mux.HandleFunc("GET /api/playlists/{id}", a.playlistTracks)
@@ -96,7 +93,6 @@ func (a *API) Handler() http.Handler {
 	a.radioRoutes(mux)
 	a.sourceRoutes(mux)
 	a.browseRoutes(mux)
-	a.spotifyRoutes(mux)
 	a.remoteCoverRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))

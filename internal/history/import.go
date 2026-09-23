@@ -7,9 +7,9 @@ import (
 )
 
 // Rematch claims imported rows whose file has since entered the library, and
-// reports how many rows found their track. Nothing imports history today — the
-// Spotify paths were removed — but rows imported by an earlier version are
-// still here and still deserve to find their tracks.
+// reports how many rows found their track. Nothing imports history today, but
+// rows left by an earlier version are still here and still deserve to find
+// their tracks.
 func (r *Recorder) Rematch(ctx context.Context) (int, error) {
 	unmatched, err := r.st.UnmatchedPlays(ctx)
 	if err != nil || len(unmatched) == 0 {

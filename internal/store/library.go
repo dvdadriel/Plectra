@@ -231,15 +231,14 @@ func (s *Store) LikedIDs(ctx context.Context) ([]int64, error) {
 // ---- plays ----
 
 type Play struct {
-	TrackID        int64
-	PlayedAt       int64
-	MSPlayed       int64
-	Completed      bool
-	Source         string
-	RawArtist      string
-	RawAlbum       string
-	RawTitle       string
-	SpotifyTrackID string
+	TrackID   int64
+	PlayedAt  int64
+	MSPlayed  int64
+	Completed bool
+	Source    string
+	RawArtist string
+	RawAlbum  string
+	RawTitle  string
 }
 
 func (s *Store) AddPlay(ctx context.Context, p Play) error {

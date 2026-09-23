@@ -356,11 +356,7 @@ li.playing .grow { font-weight: 600; }
 }
 .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 4px; }
 
-/* An anchor wears this too: the Spotify login must be a real navigation, not a
-   fetch, or the consent screen cannot open. */
-button.action, a.action {
-  display: inline-block;
-  text-decoration: none;
+button.action {
   font: 500 14px/1 var(--sans);
   color: var(--ink);
   background: var(--surface);
@@ -371,7 +367,7 @@ button.action, a.action {
   margin: 0 8px 10px 0;
   transition: border-color var(--fast), background var(--fast);
 }
-button.action:hover, a.action:hover { border-color: var(--line-strong); background: var(--surface-2); }
+button.action:hover { border-color: var(--line-strong); background: var(--surface-2); }
 
 input.path {
   width: 100%;
@@ -714,14 +710,6 @@ button[disabled] { opacity: 0.6; cursor: default; }
   box-shadow: 0 8px 24px color-mix(in oklab, var(--navy) 28%, transparent);
 }
 
-/* Numbered instructions in Settings: short enough not to need a list style. */
-.steps {
-  margin: 0 0 1rem;
-  padding-left: 1.2rem;
-  color: var(--ink-2);
-  font-size: 14px;
-  line-height: 1.7;
-}
 
 /* The pager sits under a list, not inside it. */
 .pager {

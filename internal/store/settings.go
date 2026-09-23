@@ -5,17 +5,6 @@ import (
 	"database/sql"
 )
 
-// Setting keys. What survives a restart lives here: the Spotify grant, and the
-// name of the account it belongs to.
-//
-// No client id or secret among them. Plectra uses PKCE, which needs no secret,
-// and the client id comes from the command line or the environment — a value
-// the user types once is not worth a settings table.
-const (
-	KeySpotifyRefreshToken = "spotify_refresh_token"
-	KeySpotifyAccount      = "spotify_account"
-)
-
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	if value == "" {
 		_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)

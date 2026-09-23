@@ -2,9 +2,8 @@
 // own library.
 //
 // It reads MusicBrainz, which needs no key, has no result cap, and carries full
-// track listings with durations — the three things Spotify cannot give without
-// an account. Nothing here provides audio: a track found this way is handed to
-// the source registry to be played.
+// track listings with durations, and it needs no account. Nothing here provides
+// audio: a track found this way is handed to the source registry to be played.
 package browse
 
 import (

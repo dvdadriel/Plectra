@@ -473,8 +473,7 @@ async function render() {
           <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
         </li>`).join('')}</ul>`
       : `<h2>Your playlists</h2>
-         <p class="sub">None yet. Create one in Playlists, or import your Spotify
-           account in Settings.</p>`;
+         <p class="sub">None yet. Create one in Playlists.</p>`;
 
     const recs = suggest.length
       ? suggest.map(sec => `<h2>${esc(sec.title)}</h2>
@@ -508,7 +507,7 @@ async function render() {
         <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
         <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">✕</button>
       </li>`).join('') + '</ul>' + pager((page + 1) * PAGE < ls.length, ls.length)
-      : emptyState('No playlists yet.', 'Connect your Spotify account in Settings, or create one here.'));
+      : emptyState('No playlists yet.', 'Create one here, then add tracks from any album or search result.'));
   }
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
@@ -531,52 +530,11 @@ function scanPanel(scan) {
 
 
 
-// The Spotify panel has three states, and each one says what can be done next
-// rather than showing a button that would fail.
-function spotifyPanel(sp) {
-  const fallback = `
-    <details>
-      <summary class="sub">No developer app? Import without one</summary>
-      <ol class="steps">
-        <li>Press <strong>Copy script</strong>.</li>
-        <li>Open <a href="https://open.spotify.com" target="_blank" rel="noreferrer">open.spotify.com</a>, logged in.</li>
-        <li>F12 → Console, paste, Enter. Chrome asks you to type <code>allow pasting</code> the first time.</li>
-      </ol>
-      <button class="action" id="copyconnect">Copy script</button>
-      <span class="sub" id="copiedmsg"></span>
-    </details>`;
-
-  if (!sp) return '';
-  if (!sp.configured) {
-    return `<p class="sub">No client id is set, so the account cannot be linked.
-      Start Plectra with <code>-spotify-id</code>, or put <code>SPOTIFY_CLIENT_ID</code>
-      in <code>.env</code>. Creating the app is free at
-      <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">developer.spotify.com</a>.</p>
-      ${fallback}`;
-  }
-  if (!sp.connected) {
-    return `<p class="sub">Links your account so playlists and Liked Songs can be read.
-      Read-only: Plectra cannot change anything in your Spotify account, and no
-      password is ever seen. Register the redirect URI Plectra prints at startup first.</p>
-      <a class="action" href="/api/spotify/login">Connect account</a>
-      ${fallback}`;
-  }
-  return `<p class="meta">Connected${sp.account ? ' as ' + esc(sp.account) : ''}</p>
-    <p class="sub">Only songs whose files are in your library are kept; the rest are
-      listed so you know what is missing. Sync local music first for the best match.</p>
-    <button class="action" id="spimport">Import playlists</button>
-    <button class="action" id="spout">Disconnect</button>
-    <div id="spresult" class="sub"></div>`;
-}
-
 async function settingsPanel() {
-  const [scan, sp] = await Promise.all([get('/library/scan'), get('/spotify')]);
+  const scan = await get('/library/scan');
   return `
     <h2>Local music</h2>
     ${scanPanel(scan)}
-
-    <h2>Spotify</h2>
-    ${spotifyPanel(sp)}
 `;
 }
 
@@ -611,7 +569,7 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
-  // A track from a Spotify playlist: play the local file when there is one,
+  // A track from a catalogue album: play the local file when there is one,
   // otherwise find it externally and play the best candidate.
   const sp = e.target.closest('[data-sp]');
   if (sp) {
@@ -733,40 +691,6 @@ async function onMainClick(e) {
     }, 700);
     return;
   }
-  if (e.target.id === 'spimport') {
-    e.target.disabled = true;
-    $('#spresult').innerHTML = busy('Reading your Spotify playlists — a large account takes a moment.');
-    const resp = await fetch('/api/spotify/import', {method: 'POST'});
-    e.target.disabled = false;
-    if (!resp.ok) return $('#spresult').textContent = await resp.text();
-    const r = await resp.json();
-    $('#spresult').innerHTML =
-      `${r.playlists} playlists created, ${r.matched} tracks matched, ${r.liked} liked.` +
-      (r.refused?.length ? `<br>Spotify would not serve: ${esc(r.refused.join(', '))} — its own editorial playlists are closed to apps registered after Nov 2024.` : '') +
-      (r.empty?.length ? `<br>Nothing local in: ${esc(r.empty.join(', '))}` : '') +
-      (r.unmatched?.length ? `<br>${r.unmatched.length} tracks are not in your library yet.` : '');
-    return;
-  }
-
-  if (e.target.id === 'spout') {
-    await del('/spotify');
-    return render();
-  }
-
-  if (e.target.id === 'copyconnect') {
-    // The script has to know where to post, and the page it is copied from is
-    // the only thing that reliably knows Plectra's own address.
-    const js = (await (await fetch('/connect.js')).text())
-      .replace('__PLECTRA_ORIGIN__', location.origin);
-    try {
-      await navigator.clipboard.writeText(js);
-      $('#copiedmsg').textContent = 'Copied — paste it into the Spotify console.';
-    } catch (err) {
-      $('#copiedmsg').textContent = `Clipboard blocked. Open ${location.origin}/connect.js and copy it by hand.`;
-    }
-    return;
-  }
-
 }
 
 /* ---- right-click menu ---- */
@@ -1006,22 +930,6 @@ new EventSource('/api/events').onmessage = e => {
   paint();
   if (view === 'queue' && (state.index !== prevIndex || state.queue?.length !== prevLen)) render();
 };
-
-// Spotify sends the browser back to /#settings&spotify=… — land on the panel
-// the login started from and say how it went, rather than on a silent home page.
-(function spotifyLanding() {
-  const m = location.hash.match(/spotify=(.*)$/);
-  if (!m) return;
-  const outcome = decodeURIComponent(m[1]);
-  view = 'settings';
-  document.querySelectorAll('nav button').forEach(b =>
-    b.setAttribute('aria-current', String(b.dataset.view === 'settings')));
-  history.replaceState(null, '', location.pathname);
-  // Paint runs after render() below has replaced #main.
-  setTimeout(() => flash(outcome === 'connected'
-    ? 'Spotify account connected'
-    : 'Spotify: ' + outcome), 0);
-})();
 
 render();
 </script>

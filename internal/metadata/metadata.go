@@ -28,7 +28,7 @@ type Query struct {
 // Match is what a provider found. Fields it cannot fill stay empty; the store
 // never overwrites a known value with an empty one.
 type Match struct {
-	ID       string // provider-native id (MBID, Spotify id)
+	ID       string // provider-native id (MBID)
 	Artist   string
 	Album    string
 	Title    string
@@ -37,7 +37,7 @@ type Match struct {
 	Score    int // 0-100, provider's own confidence
 }
 
-// Provider is where metadata comes from: MusicBrainz, Spotify, local tags.
+// Provider is where metadata comes from: MusicBrainz or local tags.
 type Provider interface {
 	Name() string
 	Lookup(ctx context.Context, q Query) ([]Match, error)
