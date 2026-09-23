@@ -184,13 +184,13 @@ func (s *Store) UpdateArtistMeta(ctx context.Context, id int64, mbid string) err
 	return err
 }
 
-// AlbumIDsWithout lists albums missing an identifier from the given provider,
-// which is what the enrichment queue is seeded from.
-func (s *Store) AlbumIDsWithout(ctx context.Context, provider string) ([]int64, error) {
+// AlbumIDsWithout lists albums with no MusicBrainz id, which is what the
+// enrichment queue is seeded from.
+func (s *Store) AlbumIDsWithout(ctx context.Context) ([]int64, error) {
 	return s.ids(ctx, `SELECT id FROM albums WHERE mbid IS NULL OR mbid = ''`)
 }
 
-func (s *Store) ArtistIDsWithout(ctx context.Context, provider string) ([]int64, error) {
+func (s *Store) ArtistIDsWithout(ctx context.Context) ([]int64, error) {
 	return s.ids(ctx, `SELECT id FROM artists WHERE mbid IS NULL OR mbid = ''`)
 }
 

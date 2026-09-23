@@ -68,7 +68,7 @@ func (w *Worker) Seed(ctx context.Context) (int, error) {
 		if !ready(ctx, p) {
 			continue
 		}
-		albums, err := w.st.AlbumIDsWithout(ctx, name)
+		albums, err := w.st.AlbumIDsWithout(ctx)
 		if err != nil {
 			return n, err
 		}
@@ -78,7 +78,7 @@ func (w *Worker) Seed(ctx context.Context) (int, error) {
 			}
 			n++
 		}
-		artists, err := w.st.ArtistIDsWithout(ctx, name)
+		artists, err := w.st.ArtistIDsWithout(ctx)
 		if err != nil {
 			return n, err
 		}
