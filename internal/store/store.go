@@ -44,11 +44,18 @@ type Track struct {
 	SampleRate int    `json:"sampleRate"`
 	Channels   int    `json:"channels"`
 	Path       string `json:"-"`
-	FileHash   string `json:"-"`
-	MTime      int64  `json:"-"`
-	Album      string `json:"album"`
-	Artist     string `json:"artist"`
-	Year       int    `json:"-"` // written to the album row, not the track row
+	// Ephemeral marks a location that expires: a stream handed out by an
+	// external source rather than a file on disk. It is re-resolved each time
+	// the player lands on it, because the link it was given may be dead.
+	Ephemeral bool   `json:"-"`
+	FileHash  string `json:"-"`
+	MTime     int64  `json:"-"`
+	Album     string `json:"album"`
+	Artist    string `json:"artist"`
+	// HasCover mirrors the album's flag, so the transport can show real artwork
+	// without a request that is known to 404.
+	HasCover bool `json:"hasCover"`
+	Year     int  `json:"-"` // written to the album row, not the track row
 }
 
 type Album struct {
@@ -164,7 +171,8 @@ func (s *Store) Artists(ctx context.Context) ([]Artist, error) {
 
 const trackSelect = `SELECT t.id, t.album_id, t.artist_id, t.title, t.track_no, t.disc_no,
 	t.duration_ms, t.format, t.sample_rate, t.channels, t.path, t.file_hash,
-	al.title, ar.name
+	al.title, ar.name,
+	al.cover_path IS NOT NULL AND al.cover_path <> ''
 	FROM tracks t JOIN albums al ON al.id = t.album_id JOIN artists ar ON ar.id = t.artist_id`
 
 func (s *Store) scanTracks(rows *sql.Rows) ([]Track, error) {
@@ -174,7 +182,7 @@ func (s *Store) scanTracks(rows *sql.Rows) ([]Track, error) {
 		var t Track
 		if err := rows.Scan(&t.ID, &t.AlbumID, &t.ArtistID, &t.Title, &t.TrackNo, &t.DiscNo,
 			&t.DurationMS, &t.Format, &t.SampleRate, &t.Channels, &t.Path, &t.FileHash,
-			&t.Album, &t.Artist); err != nil {
+			&t.Album, &t.Artist, &t.HasCover); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

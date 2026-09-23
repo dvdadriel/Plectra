@@ -15,6 +15,11 @@ import (
 // AAC streams YouTube serves.
 const FFmpegScheme = "ffmpeg:"
 
+// streamUserAgent matches what yt-dlp sends when it resolves a URL. Some hosts
+// hand out links bound to the requesting client and refuse anything else.
+const streamUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+	"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 // HasFFmpeg reports whether ffmpeg is on PATH. Everything that depends on it is
 // optional: without ffmpeg those sources simply do not appear.
 func HasFFmpeg() bool {
@@ -33,10 +38,17 @@ func openFFmpeg(location string) (Decoder, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-loglevel", "error",
+		// warning, not error: at error level ffmpeg swallows the HTTP status,
+		// so a refused stream reported only "Error opening input file" and the
+		// URL, which says nothing about why.
+		"-loglevel", "warning",
+		// The media hosts these URLs come from serve them to the client that
+		// asked. ffmpeg's default agent is not that client.
+		"-user_agent", streamUserAgent,
 		"-reconnect", "1", // a dropped connection mid-track is recoverable
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "5",
+		"-rw_timeout", "15000000", // 15s: a hung socket must not hang playback
 		"-i", url,
 		"-vn",
 		"-f", "s16le",

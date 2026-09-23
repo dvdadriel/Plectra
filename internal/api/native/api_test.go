@@ -38,6 +38,7 @@ func (s *fullSink) Played() int64 {
 	return s.played
 }
 func (s *fullSink) Close() error { return nil }
+func (s *fullSink) Discard()     {}
 
 // writeWAV writes a short 16-bit stereo WAV so audio.Open has something real to
 // decode. Generated in code; no binary fixtures in the tree.

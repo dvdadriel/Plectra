@@ -38,14 +38,17 @@ type command struct {
 	f     float64
 	s     string
 	b     bool
+	// reply carries a state snapshot back. A read travels the same channel as
+	// the writes so it is answered after them: two channels and a select would
+	// let State() overtake the Play() that was sent first.
+	reply chan State
 }
 
 // Player runs one goroutine that owns all playback state. Control comes in through
 // cmds; state goes out through subscribers. No mutex on the playback path.
 type Player struct {
-	cmds   chan command
-	states chan chan State
-	sink   Sink
+	cmds chan command
+	sink Sink
 
 	subMu sync.Mutex
 	subs  map[chan Event]struct{}
@@ -63,6 +66,7 @@ type Player struct {
 	trackStart int64     // sink frame at which the current track began
 	trackOff   int64     // ms skipped into the current track by a seek or a restore
 	drainTo    int64     // stop only once the sink has consumed this frame
+	pausedAt   int64     // ms into the track when pause discarded the buffer
 	switches   []switchPoint
 
 	// Suggest, when set, is asked for more music as the queue runs down, so
@@ -74,6 +78,18 @@ type Player struct {
 	// dropout you can hear.
 	Suggest   func(ctx context.Context, seed store.Track) []store.Track
 	refilling atomic.Bool
+
+	// Resolve turns a queue entry that has no file into a playable location.
+	// Tracks from a catalogue album arrive with a name and an artist and
+	// nothing else; looking one up costs seconds, so it happens when the track
+	// comes up rather than when the album is queued.
+	//
+	// Called on its own goroutine, never on the pump loop.
+	Resolve func(ctx context.Context, t store.Track) (string, error)
+
+	resolving      atomic.Bool
+	pendingResolve int // queue entry to open once the current audio drains, or -1
+	freshAt        int // index whose expiring location was just resolved, or -1
 }
 
 type switchPoint struct {
@@ -83,13 +99,14 @@ type switchPoint struct {
 
 func New(sink Sink) *Player {
 	p := &Player{
-		cmds:   make(chan command, 8),
-		states: make(chan chan State, 4),
-		sink:   sink,
-		subs:   map[chan Event]struct{}{},
-		volume: 1,
-		repeat: "off",
-		index:  -1,
+		cmds:           make(chan command, 8),
+		sink:           sink,
+		subs:           map[chan Event]struct{}{},
+		volume:         1,
+		repeat:         "off",
+		index:          -1,
+		pendingResolve: -1,
+		freshAt:        -1,
 	}
 	go p.run()
 	return p
@@ -148,9 +165,12 @@ func (p *Player) Restore(q []store.Track, index int, positionMS int64, volume fl
 }
 
 // State asks run() for a snapshot, so readers never touch engine-owned fields.
+// State is the settled state after every command already sent. Callers rely on
+// that: an endpoint that answers with the player's state has to describe the
+// command it just performed, not the one before it.
 func (p *Player) State() State {
 	reply := make(chan State, 1)
-	p.states <- reply
+	p.cmds <- command{kind: "state", reply: reply}
 	return <-reply
 }
 
@@ -164,8 +184,6 @@ func (p *Player) run() {
 		select {
 		case c := <-p.cmds:
 			p.handle(c)
-		case reply := <-p.states:
-			reply <- p.snapshot()
 		case <-tick.C:
 			p.pump()
 			p.advanceSwitches()
@@ -201,6 +219,11 @@ func (p *Player) positionMS() int64 {
 }
 
 func (p *Player) handle(c command) {
+	// A read changes nothing and must not emit an event of its own.
+	if c.kind == "state" {
+		c.reply <- p.snapshot()
+		return
+	}
 	switch c.kind {
 	case "play":
 		p.queue = c.queue
@@ -221,10 +244,18 @@ func (p *Player) handle(c command) {
 	case "remove":
 		p.removeAt(c.index)
 	case "pause":
-		p.playing = false
+		// Silence has to be immediate, so the buffered tail goes too. Where it
+		// stopped is remembered, because resume re-opens the track there.
+		if p.playing {
+			p.pausedAt = p.positionMS()
+			p.playing = false
+			p.sink.Discard()
+		}
 	case "resume":
-		if p.dec != nil {
-			p.playing = true
+		// Re-opened at the remembered position: the half second that was thrown
+		// away on pause would otherwise be skipped.
+		if p.index >= 0 && p.index < len(p.queue) {
+			p.openAt(p.index, p.pausedAt)
 		}
 	case "next":
 		p.skipTo(p.index + 1)
@@ -236,6 +267,17 @@ func (p *Player) handle(c command) {
 			p.openAt(max(p.index, 0), 0)
 		} else {
 			p.openAt(p.index-1, 0)
+		}
+	case "resolved":
+		// The listener may have moved on while the lookup ran; only the entry
+		// that was asked for is filled in, and it only starts if it is still
+		// the one selected.
+		if c.index >= 0 && c.index < len(p.queue) {
+			p.queue[c.index].Path = c.s
+			p.freshAt = c.index // this one location is trusted, once
+			if p.index == c.index {
+				p.openAt(c.index, 0)
+			}
 		}
 	case "seek":
 		p.openAt(p.index, c.ms)
@@ -280,6 +322,10 @@ func (p *Player) openAt(index int, offsetMS int64) {
 		p.dec.Close()
 		p.dec = nil
 	}
+	// Drop what the device still holds of the old track. Without this a skip is
+	// inaudible for half a second and the position counter runs against audio
+	// nobody is hearing any more.
+	p.sink.Discard()
 	p.switches = nil
 	p.pending = nil
 	p.drainTo = 0
@@ -288,7 +334,27 @@ func (p *Player) openAt(index int, offsetMS int64) {
 		p.index = -1
 		return
 	}
+	// No file, or a link that may since have died: ask for a fresh one. The
+	// player never replays an expiring URL it was given earlier.
+	if t := p.queue[index]; t.Path == "" || (t.Ephemeral && index != p.freshAt) {
+		p.startResolve(index)
+		return
+	}
+	// Freshness is spent on use: leaving this track and coming back has to ask
+	// the source again, because by then the link may be dead.
+	if p.queue[index].Ephemeral {
+		p.freshAt = -1
+	}
 	d, err := audio.Open(p.queue[index].Path)
+	if err != nil && p.queue[index].Ephemeral && index == p.freshAt {
+		// The link was resolved moments ago and still failed. One more attempt
+		// with a brand new one, then it is reported rather than retried again.
+		log.Printf("player: %s went stale, resolving again: %v", p.queue[index].Title, err)
+		p.queue[index].Path = ""
+		p.freshAt = -1
+		p.startResolve(index)
+		return
+	}
 	if err != nil {
 		log.Printf("player: open %s: %v", p.queue[index].Path, err)
 		p.emit(Event{Type: "error", Message: err.Error()})
@@ -316,6 +382,32 @@ func (p *Player) openAt(index int, offsetMS int64) {
 	p.trackOff = offsetMS
 	p.trackStart = p.sink.Played()
 	p.pushed = p.trackStart
+}
+
+// startResolve looks a track up off the engine goroutine and re-opens it when
+// the location comes back. The index is parked and marked not-playing so the
+// interface can say it is finding the stream rather than appearing stuck.
+func (p *Player) startResolve(index int) {
+	p.index = index
+	p.playing = false
+	if p.Resolve == nil {
+		p.emit(Event{Type: "error", Message: "no source can play this track"})
+		return
+	}
+	if !p.resolving.CompareAndSwap(false, true) {
+		return
+	}
+	t := p.queue[index]
+	p.emit(Event{Type: "resolving", Message: t.Title})
+	go func() {
+		defer p.resolving.Store(false)
+		loc, err := p.Resolve(context.Background(), t)
+		if err != nil || loc == "" {
+			p.emit(Event{Type: "error", Message: "no stream found for " + t.Title})
+			return
+		}
+		p.send(command{kind: "resolved", index: index, s: loc})
+	}()
 }
 
 // pump decodes ahead and feeds the sink. Runs on the engine goroutine, never
@@ -405,6 +497,14 @@ func (p *Player) gapless() {
 			next = 0
 		}
 
+		if p.queue[next].Path == "" {
+			// Nothing to hand the decoder yet. Let the buffered audio finish,
+			// then pick the track up once it has been looked up — a lookup
+			// takes seconds, so there is no gapless join to preserve.
+			p.pendingResolve = next
+			p.drainTo = p.pushed
+			return
+		}
 		d, err := audio.Open(p.queue[next].Path)
 		if err != nil {
 			p.emit(Event{Type: "error", Message: err.Error()})
@@ -427,6 +527,10 @@ func (p *Player) advanceSwitches() {
 	if p.drainTo > 0 && played >= p.drainTo {
 		p.drainTo = 0
 		p.playing = false
+		if next := p.pendingResolve; next >= 0 {
+			p.pendingResolve = -1
+			p.openAt(next, 0) // an unresolved entry: this starts the lookup
+		}
 		p.emitState()
 	}
 	for len(p.switches) > 0 && played >= p.switches[0].atFrame {

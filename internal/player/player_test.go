@@ -38,6 +38,9 @@ func (s *fakeSink) Played() int64 {
 }
 func (s *fakeSink) Close() error { return nil }
 
+// The fake consumes instantly, so there is never a queued tail to drop.
+func (s *fakeSink) Discard() {}
+
 // writeWAV writes a 16-bit stereo sine-ish tone of the given duration.
 func writeWAV(t *testing.T, path string, ms int) {
 	t.Helper()
@@ -118,11 +121,15 @@ func TestPositionComesFromSinkFrames(t *testing.T) {
 	if st.Playing {
 		t.Fatal("pause did not stop playback")
 	}
+	// The guarantee is that the position reports the seek target rather than
+	// restarting at zero. An upper bound cannot be asserted here: this sink
+	// consumes as fast as it is offered, so the position climbs the instant
+	// playback resumes and any window would be a race against the scheduler.
 	p.SeekMS(1000)
-	waitFor(t, "seek to apply", func() bool {
-		pos := p.State().PositionMS
-		return pos >= 1000 && pos < 1300 // position reports the seek target, not zero
-	})
+	waitFor(t, "seek to apply", func() bool { return p.State().PositionMS >= 1000 })
+	if got := p.State().PositionMS; got < 1000 {
+		t.Errorf("position %dms after seeking to 1000ms", got)
+	}
 }
 
 func TestBrokenFileIsSkipped(t *testing.T) {
@@ -395,5 +402,256 @@ func TestOnlyOneRefillRunsAtATime(t *testing.T) {
 	waitFor(t, "playback to finish", func() bool { return !p.State().Playing })
 	if peak.Load() > 1 {
 		t.Errorf("%d refills ran at once; the in-flight guard did not hold", peak.Load())
+	}
+}
+
+// countingSink records how often queued audio was thrown away, which is the
+// difference between a skip you hear now and one you hear half a second late.
+// It consumes at full speed, so playback advances on its own.
+type countingSink struct {
+	fakeSink
+	discards atomic.Int32
+}
+
+func (s *countingSink) Discard() { s.discards.Add(1) }
+
+// frozenSink counts discards but plays nothing, so the index moves only when a
+// command moves it. Tests about next and previous need that: with a sink that
+// drains instantly, a 300ms track ends before the assertion runs and the queue
+// walks itself.
+type frozenSink struct {
+	stalledSink
+	discards atomic.Int32
+}
+
+func (s *frozenSink) Discard() { s.discards.Add(1) }
+
+// Skipping must drop what the device still holds. Without it the old track
+// keeps playing while the engine has already moved on — which is what made
+// next and previous look stuck.
+func TestSkipDropsTheBufferedTail(t *testing.T) {
+	q := makeQueue(t, 3, 400)
+	sink := &frozenSink{}
+	p := New(sink)
+	p.Play(q, 0)
+	waitFor(t, "playback", func() bool { return p.State().Playing })
+
+	before := sink.discards.Load()
+	p.Next()
+	waitFor(t, "the second track", func() bool { return p.State().Index == 1 })
+	if sink.discards.Load() <= before {
+		t.Error("Next did not discard the buffered tail")
+	}
+
+	before = sink.discards.Load()
+	p.Prev()
+	waitFor(t, "the first track", func() bool { return p.State().Index == 0 })
+	if sink.discards.Load() <= before {
+		t.Error("Prev did not discard the buffered tail")
+	}
+}
+
+// Next must actually reach the following track rather than stalling on the one
+// that is playing.
+func TestNextAndPrevWalkTheQueue(t *testing.T) {
+	p := New(&frozenSink{})
+	p.Play(makeQueue(t, 4, 300), 0)
+	waitFor(t, "playback", func() bool { return p.State().Playing })
+
+	for want := 1; want <= 3; want++ {
+		p.Next()
+		waitFor(t, fmt.Sprintf("track %d", want), func() bool { return p.State().Index == want })
+	}
+	// Previous steps back when it is pressed early in a track.
+	for want := 2; want >= 0; want-- {
+		p.Prev()
+		waitFor(t, fmt.Sprintf("back to track %d", want), func() bool { return p.State().Index == want })
+	}
+}
+
+// Pause has to be silent at once, and resume has to pick up where the sound
+// actually stopped rather than half a second later.
+func TestPauseIsImmediateAndResumeDoesNotSkip(t *testing.T) {
+	sink := &countingSink{}
+	p := New(sink)
+	p.Play(makeQueue(t, 1, 3000), 0)
+	waitFor(t, "playback", func() bool { return p.State().Playing })
+	waitFor(t, "some audio to be consumed", func() bool { return p.State().PositionMS > 0 })
+
+	before := sink.discards.Load()
+	p.Pause()
+	waitFor(t, "paused", func() bool { return !p.State().Playing })
+	if sink.discards.Load() <= before {
+		t.Error("pause left the buffered tail playing")
+	}
+	at := p.State().PositionMS
+
+	p.Resume()
+	waitFor(t, "playing again", func() bool { return p.State().Playing })
+
+	// The guarantee is that resume picks the track up where it stopped: it must
+	// not restart from the beginning, and it must not skip the half second that
+	// pause threw away. An exact millisecond is not assertable here — this sink
+	// consumes as fast as it is offered, so the position climbs the moment
+	// playback resumes.
+	st := p.State()
+	if st.Index != 0 {
+		t.Errorf("resume moved to track %d; it must stay on the paused one", st.Index)
+	}
+	if st.PositionMS < at {
+		t.Errorf("resumed at %dms, behind the %dms where it paused — the track restarted", st.PositionMS, at)
+	}
+}
+
+// A read must be answered after the writes already sent, not alongside them.
+// While state travelled its own channel the engine's select could serve a
+// State() before the Play() that was queued first, so an endpoint answering
+// with the player's state described the moment before its own command.
+func TestStateReflectsCommandsAlreadySent(t *testing.T) {
+	q := makeQueue(t, 3, 200)
+	for i := 0; i < 200; i++ {
+		// A sink that consumes nothing, so playback cannot advance past the
+		// track Play chose: any movement in the index would be the race, not
+		// the music.
+		p := New(&stalledSink{})
+		p.Play(q, 1)
+		st := p.State() // no waiting: this must already see the Play
+		if st.Index != 1 || len(st.Queue) != 3 {
+			t.Fatalf("attempt %d: state is index %d over %d tracks; want index 1 over 3",
+				i, st.Index, len(st.Queue))
+		}
+	}
+}
+
+// stalledSink accepts nothing and plays nothing, freezing the engine wherever a
+// command left it.
+type stalledSink struct{}
+
+func (stalledSink) Write([]float32) (int, error) { return 0, nil }
+func (stalledSink) Format() audio.Format         { return audio.Format{SampleRate: 48000, Channels: 2} }
+func (stalledSink) Played() int64                { return 0 }
+func (stalledSink) Discard()                     {}
+func (stalledSink) Close() error                 { return nil }
+
+// A catalogue album is queued with names but no files. Next and previous must
+// walk it exactly as they walk a local album — the entry is looked up when it
+// comes up, which is why this exists at all.
+func TestUnresolvedEntriesAreLookedUpWhenTheyComeUp(t *testing.T) {
+	real := makeQueue(t, 3, 400)
+
+	// Two named-only entries around one real file.
+	q := []store.Track{
+		{ID: 1, Path: real[0].Path, Title: "One", Artist: "A"},
+		{Title: "Two", Artist: "A"},   // no file: must be resolved
+		{Title: "Three", Artist: "A"}, // no file: must be resolved
+	}
+
+	var mu sync.Mutex
+	var asked []string
+	p := New(&frozenSink{})
+	p.Resolve = func(_ context.Context, tr store.Track) (string, error) {
+		mu.Lock()
+		asked = append(asked, tr.Title)
+		mu.Unlock()
+		return real[1].Path, nil
+	}
+	p.Play(q, 0)
+	waitFor(t, "the first track", func() bool { return p.State().Index == 0 })
+
+	p.Next()
+	waitFor(t, "the looked-up track to play", func() bool {
+		st := p.State()
+		return st.Index == 1 && st.Playing
+	})
+
+	p.Next()
+	waitFor(t, "the second looked-up track", func() bool {
+		st := p.State()
+		return st.Index == 2 && st.Playing
+	})
+
+	// And back again, over an entry that now has a file.
+	p.Prev()
+	waitFor(t, "back to the middle", func() bool { return p.State().Index == 1 })
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) < 2 {
+		t.Fatalf("looked up %v; want both unresolved tracks", asked)
+	}
+	if asked[0] != "Two" {
+		t.Errorf("first lookup was %q, want Two", asked[0])
+	}
+}
+
+// Without a resolver the player must say so rather than stall on an entry it
+// can never open.
+func TestUnresolvableEntryReportsInsteadOfStalling(t *testing.T) {
+	p := New(&frozenSink{})
+	events, stop := p.Subscribe()
+	defer stop()
+
+	p.Play([]store.Track{{Title: "Nowhere", Artist: "A"}}, 0)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case e := <-events:
+			if e.Type == "error" {
+				return // reported, as it should be
+			}
+		case <-deadline:
+			t.Fatal("no error reported for a track with no file and no resolver")
+		}
+	}
+}
+
+// An expiring link is never replayed. Coming back to an external track asks the
+// source for a new location, because the one it gave earlier may be dead — the
+// failure people see is "Error opening input file" on a URL that worked a
+// minute ago.
+func TestExpiringLocationsAreResolvedAgainOnReturn(t *testing.T) {
+	real := makeQueue(t, 2, 400)
+
+	var mu sync.Mutex
+	lookups := 0
+	p := New(&frozenSink{})
+	p.Resolve = func(_ context.Context, tr store.Track) (string, error) {
+		mu.Lock()
+		lookups++
+		mu.Unlock()
+		return real[1].Path, nil
+	}
+	p.Play([]store.Track{
+		{ID: 1, Path: real[0].Path, Title: "Local"},
+		{Title: "Remote", Artist: "A", Ephemeral: true},
+	}, 0)
+	waitFor(t, "the local track", func() bool { return p.State().Index == 0 })
+
+	p.Next()
+	waitFor(t, "the remote track", func() bool {
+		st := p.State()
+		return st.Index == 1 && st.Playing
+	})
+	mu.Lock()
+	first := lookups
+	mu.Unlock()
+	if first != 1 {
+		t.Fatalf("%d lookups reaching the track, want 1", first)
+	}
+
+	// Away and back: the old link is not reused.
+	p.Prev()
+	waitFor(t, "back to the local track", func() bool { return p.State().Index == 0 })
+	p.Next()
+	waitFor(t, "the remote track again", func() bool {
+		st := p.State()
+		return st.Index == 1 && st.Playing
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups != 2 {
+		t.Errorf("%d lookups after returning, want 2 — the expired link was replayed", lookups)
 	}
 }

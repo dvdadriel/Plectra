@@ -26,7 +26,9 @@
   <div class="tools">
     <label class="visually-hidden" for="q">Search</label>
     <input id="q" type="search" placeholder="Artist, album, or track" autocomplete="off">
-    <button id="theme" class="ghost" type="button">Theme: system</button>
+    <button id="theme" class="ghost icon-only" type="button" aria-label="Theme: system">
+      <span class="theme-orb"><span class="theme-bite"></span></span>
+    </button>
   </div>
 </header>
 
@@ -49,13 +51,16 @@
 
   <main id="main" tabindex="-1"></main>
 
-  <aside class="queue-panel" id="queuepanel" hidden aria-label="Queue"></aside>
+  <aside class="side" id="side" hidden>
+    <section class="nowplaying" id="nowplaying" aria-label="Now playing"></section>
+    <section class="queue-panel" id="queuepanel" aria-label="Queue"></section>
+  </aside>
 </div>
 
 <footer class="player">
-  <button id="rail" type="button" aria-label="Seek"><div></div></button>
+  <button id="rail" type="button" aria-label="Seek. Arrow keys move by five seconds."><div></div></button>
   <div class="now">
-    <span class="sleeve empty hue-0" id="nowart" aria-hidden="true"></span>
+    <span class="np-art hue-0" id="nowart" aria-hidden="true"></span>
     <div class="now-text">
       <div class="now-title" id="now">Nothing playing</div>
       <div class="now-artist"><span id="elapsed">0:00</span><span id="total"></span></div>
@@ -95,6 +100,10 @@ const ICON = {
   pause: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="currentColor" d="M7 5h3.2v14H7zm6.8 0H17v14h-3.2z"/></svg>',
   heart: '<svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M12 20s-7-4.4-7-9.2A3.9 3.9 0 0 1 12 8a3.9 3.9 0 0 1 7 2.8C19 15.6 12 20 12 20Z"/></svg>',
   heartFull: '<svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17"><path fill="currentColor" d="M12 20s-7-4.4-7-9.2A3.9 3.9 0 0 1 12 8a3.9 3.9 0 0 1 7 2.8C19 15.6 12 20 12 20Z"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20h4L20 8l-4-4L4 16z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>',
+  chevL: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  chevR: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
 };
 const get = p => fetch('/api' + p).then(r => r.ok ? r.json() : null);
 const post = (p, body) => fetch('/api' + p, {method: 'POST', body: body && JSON.stringify(body)});
@@ -112,18 +121,34 @@ let view = 'home', state = {}, liked = new Set(), searchTimer, playlistID = null
 
 /* ---- theme: system unless the listener forced one ---- */
 const themeBtn = $('#theme');
+// The control is one shape: a disc that the night takes a bite out of. System
+// follows the OS, so the orb shows whichever the OS is currently giving.
 function paintTheme() {
   const t = document.documentElement.dataset.theme || 'system';
-  themeBtn.textContent = 'Theme: ' + t;
-  themeBtn.setAttribute('aria-label', `Theme: ${t}. Click to change.`);
+  const dark = t === 'dark' ||
+    (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  themeBtn.dataset.mode = t;
+  themeBtn.classList.toggle('is-dark', dark);
+  themeBtn.setAttribute('aria-label',
+    `Theme: ${t}. Click for ${{system: 'light', light: 'dark', dark: 'system'}[t]}.`);
 }
 themeBtn.onclick = () => {
+  const root = document.documentElement;
   const order = ['system', 'light', 'dark'];
-  const next = order[(order.indexOf(document.documentElement.dataset.theme || 'system') + 1) % 3];
-  if (next === 'system') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = next;
+  const next = order[(order.indexOf(root.dataset.theme || 'system') + 1) % 3];
+
+  // Every colour token changes at once. Without this the whole page runs its
+  // hover transitions simultaneously and the switch visibly drags.
+  root.classList.add('theme-swap');
+
+  if (next === 'system') delete root.dataset.theme;
+  else root.dataset.theme = next;
   try { next === 'system' ? localStorage.removeItem('plectra-theme') : localStorage.setItem('plectra-theme', next); } catch (e) {}
   paintTheme();
+
+  // Two frames: one for the new tokens to paint, one before transitions are
+  // allowed again, so nothing animates from the old colours.
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-swap')));
 };
 paintTheme();
 
@@ -152,10 +177,14 @@ const sleeve = (a, src, withPlay) => {
     : `<span class="sleeve empty hue-${hue}">${initial}${btn}</span>`;
 };
 
+// A library album plays at once. A catalogue album has to be looked up first,
+// so its button opens the album and starts the first track that resolves —
+// the panel is where the waiting is visible.
 const playBtn = a => a.id
   ? `<button class="pick" data-play='{"albumID":${a.id}}'
        aria-label="Play ${esc(a.title)}">${ICON.play}</button>`
-  : '';
+  : `<button class="pick" data-playmb='${esc(JSON.stringify({mbid: a.mbid || a.id, title: a.title, artist: a.artist, cover: a.cover || ''}))}'
+       aria-label="Play ${esc(a.title)}">${ICON.play}</button>`;
 
 const albumCard = a => {
   // Only ask for artwork the library says it has: most albums here have none,
@@ -177,8 +206,14 @@ const albumGrid = albums => albums.length
   : emptyState('The shelf is empty',
       'Point Plectra at a folder of music, then press Sync local music in Settings.');
 
-const albumRow = albums => !albums.length ? ''
-  : `<div class="grid row">` + albums.map(albumCard).join('') + `</div>`;
+// A row scrolls sideways, so it carries its own way to move: the arrows step by
+// roughly a screenful and disable themselves at each end.
+const albumRow = albums => !albums.length ? '' : `
+  <div class="row-wrap">
+    <button class="rowarrow left" data-scroll="-1" aria-label="Scroll left" tabindex="-1">${ICON.chevL}</button>
+    <div class="grid row">${albums.map(albumCard).join('')}</div>
+    <button class="rowarrow right" data-scroll="1" aria-label="Scroll right">${ICON.chevR}</button>
+  </div>`;
 
 const skeletonGrid = (n = 8) => `<div class="skeleton-grid">${
   Array.from({length: n}, () => `<div><div class="skeleton skeleton-art"></div>
@@ -188,7 +223,8 @@ const skeletonGrid = (n = 8) => `<div class="skeleton-grid">${
 const skeletonRows = (n = 8) => Array.from({length: n},
   () => '<div class="skeleton skeleton-row"></div>').join('');
 
-const busy = (what) => `<p class="busy"><span class="spinner"></span>${esc(what)}</p>`;
+const picks = '<span class="picks" aria-hidden="true"><i></i><i></i><i></i><i></i></span>';
+const busy = what => `<p class="busy" role="status">${picks}${what ? esc(what) : ''}</p>`;
 
 // Every view paints a skeleton before it awaits anything, so the screen never
 // sits on stale content and never jumps from empty to full without warning.
@@ -369,10 +405,10 @@ async function openAlbum(id) {
 // MusicBrainz, and each row is marked with whether it will play from disk or has
 // to be resolved through an external source — so nobody presses play on a row
 // that is going to take five seconds without warning.
-async function openCatalogueAlbum(info) {
+async function openCatalogueAlbum(info, autoplay) {
   const m = $('#main');
   page = 0;
-  repaint = () => openCatalogueAlbum(info);
+  repaint = () => openCatalogueAlbum(info, false);
   m.innerHTML = skeletonRows();
 
 
@@ -382,10 +418,10 @@ async function openCatalogueAlbum(info) {
       <div class="album-meta">
         <button class="ghost" id="albumback">← Back</button>
         <h2>${esc(info.title)}</h2>
-        <p class="sub">${esc(info.artist)} · not in your library</p>
+        <p class="sub">${esc(info.artist)}</p>
       </div>
     </div>
-    <div id="album-tracks">${busy('Reading the track listing from MusicBrainz…')}</div>`;
+    <div id="album-tracks">${busy('')}</div>`;
   $('#albumback').onclick = () => render();
 
   const tracks = (await get('/browse/album?id=' + encodeURIComponent(info.mbid))) || [];
@@ -395,17 +431,22 @@ async function openCatalogueAlbum(info) {
     box.innerHTML = '<p class="sub">No track list for this album. The catalogue did not answer — try again, or play it from the files as they are.</p>';
     return;
   }
-  box.innerHTML = '<ul>' + tracks.map(t => `
+  box.innerHTML = '<ul>' + tracks.map((t, i) => `
     <li>
       <span class="no">${t.position || ''}</span>
       <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
         ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
       </button>
       <span class="dur">${mmss(t.durationMs)}</span>
-      <span class="meta">${t.localId ? 'library' : 'external'}</span>
+      <span class="meta" data-mark="${t.localId ? 'library' : 'external'}">${t.localId ? 'library' : 'external'}</span>
       ${t.localId ? `<button class="icon" data-enq='{"trackIDs":[${t.localId}]}'
             aria-label="Add ${esc(t.title)} to the queue">+</button>` : ''}
     </li>`).join('') + '</ul>';
+
+  // Play arrived from a card, so start the album without a second click. The
+  // row marks itself while the stream is resolved, which is the only honest
+  // way to show a wait that can run to several seconds.
+  if (autoplay) box.querySelector('[data-sp]')?.click();
 }
 
 async function render() {
@@ -503,8 +544,14 @@ async function render() {
     if (!listing.length) {
       return m.innerHTML = emptyState('Nothing liked yet', 'Like a track or an album and it collects here.');
     }
-    return m.innerHTML = `<h2>Likes</h2><p class="sub">${listing.length} track${
-      listing.length === 1 ? '' : 's'} you kept.</p>` + pagedList(listing);
+    const ids = listing.map(t => t.id);
+    return m.innerHTML = `<h2>Kept</h2>
+      <p class="sub">${listing.length} track${listing.length === 1 ? '' : 's'} you liked, newest first.</p>
+      <div class="actions">
+        <button class="action primary" data-playids='${esc(JSON.stringify(ids))}'>Play</button>
+        <button class="action" id="likeshuffle" data-ids='${esc(JSON.stringify(ids))}'>Shuffle</button>
+        <button class="action" data-enq='{"trackIDs":${JSON.stringify(ids)}}'>Add to queue</button>
+      </div>` + pagedList(listing);
   }
   if (view === 'queue') {
     listing = state.queue || [];
@@ -516,15 +563,26 @@ async function render() {
   if (view === 'playlists') {
     const ls = (await get('/playlists')) || [];
     listing = [];
-    return m.innerHTML = `<button class="action" id="newpl">New playlist</button>` + (ls.length ? '<ul>' + slice(ls).map(p => `
-      <li>
-        <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
-        <span class="meta">${p.trackCount} tracks</span>
-        <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">▶</button>
-        <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
-        <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">✕</button>
-      </li>`).join('') + '</ul>' + pager((page + 1) * PAGE < ls.length, ls.length)
-      : emptyState('No playlists yet', 'Save an album or a track to a playlist and it will sit here.'));
+    // Everything happens in the page. A browser prompt() is a modal dialog the
+    // product never styled, cannot be cancelled with Escape consistently, and
+    // looks like a phishing box on a self-hosted tool.
+    return m.innerHTML = `
+      <h2>Playlists</h2>
+      <p class="sub">Yours to build. Right-click any track to drop it into one.</p>
+      <form class="newpl" id="newpl">
+        <input id="plname" placeholder="Name a new playlist" maxlength="120" autocomplete="off">
+        <button class="action primary" type="submit">Create</button>
+      </form>
+      ${ls.length ? '<ul>' + slice(ls).map(p => `
+        <li data-pl="${p.id}">
+          <button class="grow" data-open="${p.id}">${esc(p.name)}</button>
+          <span class="meta">${p.trackCount} track${p.trackCount === 1 ? '' : 's'}</span>
+          <button class="icon" data-play='{"playlistID":${p.id}}' aria-label="Play ${esc(p.name)}">${ICON.play}</button>
+          <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
+          <button class="icon" data-renamepl="${p.id}" data-name="${esc(p.name)}" aria-label="Rename ${esc(p.name)}">${ICON.pencil}</button>
+          <button class="icon" data-delpl="${p.id}" aria-label="Delete ${esc(p.name)}">${ICON.trash}</button>
+        </li>`).join('') + '</ul>' + pager((page + 1) * PAGE < ls.length, ls.length)
+        : emptyState('No playlists yet', 'Name one above, then right-click any track to put it inside.')}`;
   }
   if (view === 'settings') return m.innerHTML = await settingsPanel();
 }
@@ -558,7 +616,25 @@ async function settingsPanel() {
 /* ---- interaction ---- */
 
 $('#main').addEventListener('click', onMainClick);
-$('#queuepanel').addEventListener('click', onMainClick);
+
+// Creating and renaming are forms, so Enter works and the browser handles focus.
+$('#main').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  const name = f.querySelector('input').value.trim();
+  if (!name) return;
+  if (f.id === 'newpl') {
+    await post('/playlists', {name});
+    flash('Playlist created');
+  } else if (f.classList.contains('renamepl')) {
+    await fetch('/api/playlists/' + f.dataset.id, {
+      method: 'PATCH', body: JSON.stringify({name}),
+    });
+    flash('Playlist renamed');
+  }
+  render();
+});
+$('#side').addEventListener('click', onMainClick);
 
 // The dropdown is mounted in the header, not in #main, so it carries its own
 // listener rather than widening the main one.
@@ -592,19 +668,46 @@ async function onMainClick(e) {
   const sp = e.target.closest('[data-sp]');
   if (sp) {
     const info = JSON.parse(sp.dataset.sp);
-    if (info.localId) return post('/player/play', {trackIDs: [info.localId], startIndex: 0});
+    // The listing the row came from, in order, so the queue is the album and
+    // not one lonely track with nothing to skip to.
+    const album = [...sp.closest('ul').querySelectorAll('[data-sp]')]
+      .map(b => JSON.parse(b.dataset.sp))
+      .map(x => ({title: x.title, artist: x.artist, localId: x.localId || 0}));
+    const at = info.at ?? 0;
+
+    if (info.localId) {
+      // A local row still queues the whole album, taking the files it has.
+      const ids = album.map(x => x.localId).filter(Boolean);
+      if (ids.length === album.length) {
+        return post('/player/play', {trackIDs: ids, startIndex: at});
+      }
+      return post('/player/play', {trackIDs: [info.localId], startIndex: 0});
+    }
 
     const row = sp.closest('li');
+    // Exactly one row can be the one playing, so the others give the claim up
+    // before this one takes it.
+    row?.parentElement?.querySelectorAll('li').forEach(li => {
+      li.classList.remove('playing');
+      const m = li.querySelector('.meta');
+      if (m && m.dataset.mark) m.textContent = m.dataset.mark;
+    });
+
     const mark = row?.querySelector('.meta');
-    if (mark) mark.innerHTML = '<span class="spinner"></span>';
+    if (mark) mark.innerHTML = picks;
     const found = await get('/source/find?artist=' + encodeURIComponent(info.artist) +
       '&title=' + encodeURIComponent(info.title));
     if (!found?.length) {
-      if (mark) mark.textContent = 'not found';
+      if (mark) mark.textContent = 'no stream found';
       return;
     }
-    const resp = await post('/source/play', found[0]);
-    if (mark) mark.textContent = resp.ok ? 'playing' : 'failed';
+    // The external source names tracks its own way, often with the uploader's
+    // wording. The listener picked a row out of an album listing, so the player
+    // shows that album's title and artist, not whatever the stream is called.
+    const resp = await post('/source/play',
+      {...found[0], title: info.title, artist: info.artist, album, startIndex: at});
+    if (mark) mark.textContent = resp.ok ? 'playing' : 'could not play';
+    if (resp.ok) row?.classList.add('playing');
     return;
   }
 
@@ -637,6 +740,68 @@ async function onMainClick(e) {
     view = all.dataset.viewAll;
     page = 0;
     return render();
+  }
+
+  // Likes: play or shuffle the whole list.
+  const ids = e.target.closest('[data-playids]');
+  if (ids) return post('/player/play', {trackIDs: JSON.parse(ids.dataset.playids), startIndex: 0});
+
+  if (e.target.id === 'likeshuffle') {
+    const order = JSON.parse(e.target.dataset.ids);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    return post('/player/play', {trackIDs: order, startIndex: 0});
+  }
+
+  // Rename happens in the row: the name becomes an input, Enter commits.
+  const ren = e.target.closest('[data-renamepl]');
+  if (ren) {
+    const row = ren.closest('li');
+    const id = ren.dataset.renamepl;
+    row.innerHTML = `<form class="renamepl" data-id="${id}">
+      <input value="${esc(ren.dataset.name)}" maxlength="120" autocomplete="off">
+      <button class="action primary" type="submit">Save</button>
+      <button class="action" type="button" data-cancel>Cancel</button>
+    </form>`;
+    row.querySelector('input').focus();
+    row.querySelector('input').select();
+    return;
+  }
+  if (e.target.matches('[data-cancel]')) return render();
+
+  // Delete asks in the row rather than in a browser dialog.
+  const delpl = e.target.closest('[data-delpl]');
+  if (delpl) {
+    const row = delpl.closest('li');
+    const name = row.querySelector('.grow')?.textContent.trim() || 'this playlist';
+    row.innerHTML = `<span class="grow">Delete ${esc(name)}?</span>
+      <button class="action" data-delyes="${delpl.dataset.delpl}">Delete</button>
+      <button class="action" type="button" data-cancel>Keep</button>`;
+    return;
+  }
+  const yes = e.target.closest('[data-delyes]');
+  if (yes) {
+    await del('/playlists/' + yes.dataset.delyes);
+    flash('Playlist deleted');
+    return render();
+  }
+
+  const arrow = e.target.closest('[data-scroll]');
+  if (arrow) {
+    const row = arrow.parentElement.querySelector('.grid.row');
+    row.scrollBy({left: Number(arrow.dataset.scroll) * (row.clientWidth * 0.85),
+                  behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+    return;
+  }
+
+  // A catalogue album cannot play until something resolves a stream, so the
+  // button opens it and starts the first track from there.
+  const pmb = e.target.closest('[data-playmb]');
+  if (pmb) {
+    e.stopPropagation();
+    return openCatalogueAlbum(JSON.parse(pmb.dataset.playmb), true);
   }
 
   const play = e.target.closest('[data-play]');
@@ -682,15 +847,6 @@ async function onMainClick(e) {
     await del(`/playlists/${playlistID}/tracks/${rm.dataset.remove}`);
     listing = (await get('/playlists/' + playlistID)) || [];
     $('#main').innerHTML = pagedList(listing, {playlist: true});
-    return;
-  }
-
-  const delpl = e.target.closest('[data-delpl]');
-  if (delpl) { await del('/playlists/' + delpl.dataset.delpl); return render(); }
-
-  if (e.target.id === 'newpl') {
-    const name = prompt('Playlist name');
-    if (name) { await post('/playlists', {name}); render(); }
     return;
   }
 
@@ -837,15 +993,15 @@ async function playlistMenu(trackID) {
   const ls = (await get('/playlists')) || [];
   const r = menu.getBoundingClientRect();
   const add = id => post(`/playlists/${id}/tracks`, {trackIDs: [trackID]}).then(() => flash('Added to the playlist'));
-  openMenu(r.left, r.top, ls.map(pl => ({label: pl.name, run: () => add(pl.id)})).concat([{
-    label: 'New playlist…',
-    run: async () => {
-      const name = prompt('Playlist name');
-      if (!name) return;
-      const pl = await (await fetch('/api/playlists', {method: 'POST', body: JSON.stringify({name})})).json();
-      add(pl.id);
-    },
-  }]));
+  if (!ls.length) {
+    openMenu(r.left, r.top, [{label: 'No playlists yet — make one in Playlists', run: () => {
+      view = 'playlists';
+      markNav();
+      render();
+    }}]);
+    return;
+  }
+  openMenu(r.left, r.top, ls.map(pl => ({label: pl.name, run: () => add(pl.id)})));
 }
 
 $('#main').addEventListener('contextmenu', e => {
@@ -854,6 +1010,25 @@ $('#main').addEventListener('contextmenu', e => {
   e.preventDefault();
   openMenu(e.clientX, e.clientY, acts);
 });
+
+// An arrow at the end of its row is a control that does nothing, so it turns
+// itself off. Delegated and re-run on render, because rows come and go.
+function syncArrows() {
+  document.querySelectorAll('.row-wrap').forEach(w => {
+    const row = w.querySelector('.grid.row');
+    const max = row.scrollWidth - row.clientWidth;
+    w.querySelector('.rowarrow.left').disabled = row.scrollLeft <= 2;
+    w.querySelector('.rowarrow.right').disabled = row.scrollLeft >= max - 2;
+  });
+}
+addEventListener('scroll', e => {
+  if (e.target instanceof Element && e.target.matches('.grid.row')) syncArrows();
+}, true);
+
+// Rows arrive from several paths — a view render, an album panel, a pager — so
+// the arrows are synced when the content changes rather than at each call site.
+new MutationObserver(() => syncArrows()).observe($('#main'), {childList: true, subtree: true});
+addEventListener('resize', () => syncArrows());
 
 // Two groups of destinations — the bar and the rail — but one current view.
 const navButtons = () => document.querySelectorAll('[data-view]');
@@ -903,12 +1078,58 @@ $('#like').onclick = async () => {
   if (view === 'likes' || view === 'queue') render();
 };
 
-$('#rail').onclick = e => {
+/* ---- seeking: click anywhere, or drag the rail ---- */
+
+// While a drag is in flight the rail follows the pointer rather than the
+// player, so the handle does not snap back between the seek and the next
+// state event.
+let dragging = false;
+const railEl = $('#rail');
+
+const fractionAt = clientX => {
+  const r = railEl.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+};
+
+const showFraction = f => {
+  railEl.firstElementChild.style.setProperty('--progress', f);
+  railEl.style.setProperty('--progress', f); // the handle rides the same value
+};
+
+railEl.addEventListener('pointerdown', e => {
   const t = state.queue?.[state.index];
   if (!t?.durationMs) return; // unknown duration: seeking would be a guess
-  const r = $('#rail').getBoundingClientRect();
-  post('/player/seek', {positionMs: Math.round((e.clientX - r.left) / r.width * t.durationMs)});
+  dragging = true;
+  railEl.setPointerCapture(e.pointerId);
+  showFraction(fractionAt(e.clientX));
+});
+
+railEl.addEventListener('pointermove', e => {
+  if (dragging) showFraction(fractionAt(e.clientX));
+});
+
+const endDrag = e => {
+  if (!dragging) return;
+  dragging = false;
+  const t = state.queue?.[state.index];
+  if (t?.durationMs) {
+    post('/player/seek', {positionMs: Math.round(fractionAt(e.clientX) * t.durationMs)});
+  }
 };
+railEl.addEventListener('pointerup', endDrag);
+railEl.addEventListener('pointercancel', () => { dragging = false; });
+
+// Keyboard seeking, because a rail you can only drag is a rail some people
+// cannot use at all.
+railEl.addEventListener('keydown', e => {
+  const t = state.queue?.[state.index];
+  if (!t?.durationMs) return;
+  const step = e.shiftKey ? 30000 : 5000;
+  if (e.key === 'ArrowRight') post('/player/seek', {positionMs: Math.min(t.durationMs, state.positionMs + step)});
+  else if (e.key === 'ArrowLeft') post('/player/seek', {positionMs: Math.max(0, state.positionMs - step)});
+  else return;
+  e.preventDefault();
+});
 
 function paint() {
   const t = state.queue?.[state.index];
@@ -924,15 +1145,25 @@ function paint() {
   const art = $('#nowart');
   if (t) {
     const hue = hueOf(t.albumId || t.id);
-    art.className = `sleeve empty hue-${hue}`;
-    art.textContent = (t.album || t.title || '?').trim()[0] || '?';
     art.hidden = false;
+    // Real artwork when the album has it, the album's colour and initial when
+    // it does not — the same sleeve the shelf shows, at transport size.
+    const initial = (t.album || t.title || '?').trim()[0] || '?';
+    art.className = `np-art hue-${hue}`;
+    if (t.albumId && t.hasCover) {
+      art.innerHTML = `<img src="/api/cover/${t.albumId}" alt=""
+        onerror="this.remove(); this.parentElement.textContent = ${JSON.stringify(initial)}">`;
+    } else {
+      art.textContent = initial;
+    }
   } else {
     art.hidden = true;
   }
 
-  $('#rail').firstElementChild.style.setProperty('--progress',
-    t?.durationMs ? Math.min(1, state.positionMs / t.durationMs) : 0);
+  // A drag owns the rail until it ends; state events must not fight it.
+  if (!dragging) {
+    showFraction(t?.durationMs ? Math.min(1, state.positionMs / t.durationMs) : 0);
+  }
 
   const playing = !!state.playing;
   $('#toggle').innerHTML = playing ? ICON.pause : ICON.play;
@@ -948,26 +1179,42 @@ function paint() {
   $('#like').innerHTML = isLiked ? ICON.heartFull : ICON.heart;
   $('#vol').value = state.volume ?? 1;
 
-  paintQueue();
+  paintSide();
 }
 
-// The queue is a view of player state, so the panel exists exactly when the
-// state does: nothing queued, no column.
-function paintQueue() {
-  const panel = $('#queuepanel');
+// The right column is a view of player state, so it exists exactly when the
+// state does: nothing loaded, no column, no transport.
+function paintSide() {
   const q = state.queue || [];
-  document.body.classList.toggle('has-queue', q.length > 0);
-  panel.hidden = q.length === 0;
-  if (!q.length) return;
+  const t = q[state.index];
+  const live = q.length > 0;
+
+  document.body.classList.toggle('has-queue', live);
+  document.body.classList.toggle('has-player', live);
+  $('#side').hidden = !live;
+  if (!live) return;
+
+  const np = $('#nowplaying');
+  if (t) {
+    const hue = hueOf(t.albumId || t.id);
+    const initial = esc((t.album || t.title || '?').trim()[0] || '?');
+    np.innerHTML = `
+      <span class="sleeve empty hue-${hue}" aria-hidden="true">${initial}</span>
+      <div class="np-title">${esc(t.title)}</div>
+      <div class="np-artist">${esc(t.artist)}</div>
+      ${t.album ? `<div class="np-album">${esc(t.album)}</div>` : ''}`;
+    np.hidden = false;
+  } else {
+    np.hidden = true;
+  }
 
   const from = state.index < 0 ? 0 : state.index;
-  const upcoming = q.slice(from);
-  panel.innerHTML = `<h2>Queue</h2>
-    <p class="meta">${upcoming.length} ahead of you${
-      from ? ` · ${from} played` : ''}</p>
-    <ul>${upcoming.slice(0, 40).map((t, i) => {
-      const at = (state.index < 0 ? 0 : state.index) + i;
-      return `<li class="${at === state.index ? 'playing' : ''}">
+  const upcoming = q.slice(from + 1);
+  $('#queuepanel').innerHTML = `<h2>Next up</h2>
+    <p class="meta">${upcoming.length ? `${upcoming.length} ahead of you` : 'End of the queue'}</p>
+    <ul>${upcoming.slice(0, 50).map((t, i) => {
+      const at = from + 1 + i;
+      return `<li>
         <button class="grow" data-index="${at}" data-list="queue">${esc(t.title)}
           <span class="sub">— ${esc(t.artist)}</span></button>
         <button class="icon" data-dequeue="${at}" aria-label="Remove ${esc(t.title)} from queue">&times;</button>
@@ -983,15 +1230,37 @@ const sizeTransport = () =>
 new ResizeObserver(sizeTransport).observe(transport);
 sizeTransport();
 
-new EventSource('/api/events').onmessage = e => {
-  const ev = JSON.parse(e.data);
-  if (ev.type === 'error') return console.warn('player:', ev.message);
-  if (!ev.state) return;
-  const prevIndex = state.index, prevLen = state.queue?.length;
-  state = ev.state;
-  paint();
-  if (view === 'queue' && (state.index !== prevIndex || state.queue?.length !== prevLen)) render();
-};
+// The page is driven entirely by this stream: if it dies, every control still
+// responds but nothing on screen ever changes again. So it reconnects, and the
+// view is repainted when it comes back.
+let events, retry = 0;
+
+function listen() {
+  events = new EventSource('/api/events');
+
+  events.onopen = () => {
+    if (retry) render(); // whatever happened while we were away is now visible
+    retry = 0;
+  };
+
+  events.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'error') return flash(ev.message);
+    if (!ev.state) return;
+    const prevIndex = state.index, prevLen = state.queue?.length;
+    state = ev.state;
+    paint();
+    if (view === 'queue' && (state.index !== prevIndex || state.queue?.length !== prevLen)) render();
+  };
+
+  events.onerror = () => {
+    events.close();
+    // Backing off to a few seconds: a restarted server is back in one or two.
+    retry = Math.min(retry + 1, 6);
+    setTimeout(listen, retry * 500);
+  };
+}
+listen();
 
 render();
 </script>

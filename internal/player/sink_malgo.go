@@ -66,6 +66,10 @@ func (s *malgoSink) Write(pcm []float32) (int, error) { return s.buf.write(pcm),
 func (s *malgoSink) Format() audio.Format             { return s.fmt }
 func (s *malgoSink) Played() int64                    { return s.played.Load() }
 
+// Discard throws away queued audio. The frames dropped were never handed to the
+// device, so `played` does not count them and the position stays honest.
+func (s *malgoSink) Discard() { s.buf.reset() }
+
 func (s *malgoSink) Close() error {
 	if s.dev != nil {
 		s.dev.Uninit()

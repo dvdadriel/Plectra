@@ -11,5 +11,9 @@ type Sink interface {
 	// Played reports frames the device has actually consumed. This, not the wall
 	// clock, is the source of truth for playback position.
 	Played() int64
+	// Discard drops whatever is queued but not yet played. Without it a skip or
+	// a pause is heard half a second late: the device keeps chewing through the
+	// old track while the engine has already moved on.
+	Discard()
 	Close() error
 }

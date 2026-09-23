@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -141,6 +142,18 @@ func main() {
 	// External sources are optional and self-declaring: a provider that needs a
 	// tool the user has not installed simply does not appear.
 	sources := source.NewRegistry(source.NewYTDLP())
+	// A queue entry with no file is a track from a catalogue album. Looking it
+	// up is what lets next and previous walk an album Plectra does not own.
+	pl.Resolve = func(ctx context.Context, t store.Track) (string, error) {
+		found, err := sources.Find(ctx, source.Query{Artist: t.Artist, Title: t.Title})
+		if err != nil {
+			return "", err
+		}
+		if len(found) == 0 {
+			return "", fmt.Errorf("no candidate for %s — %s", t.Artist, t.Title)
+		}
+		return sources.Resolve(ctx, found[0])
+	}
 	if names := sources.Names(); len(names) > 0 {
 		log.Printf("external audio sources: %v", names)
 	}

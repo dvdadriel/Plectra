@@ -132,6 +132,7 @@ func (s *silentSink) Write(pcm []float32) (int, error) {
 func (s *silentSink) Format() audio.Format { return audio.Format{SampleRate: 48000, Channels: 2} }
 func (s *silentSink) Played() int64        { return s.played }
 func (s *silentSink) Close() error         { return nil }
+func (s *silentSink) Discard()             {}
 
 const (
 	testUser = "plectra"

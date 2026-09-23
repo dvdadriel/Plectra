@@ -39,12 +39,14 @@
   --r-sm: 10px;
   --r-md: 14px;
   --r-pill: 999px;
-  /* The plectrum: three corners square-ish, one point. Sleeves only. */
+  /* At rest a sleeve is a plain square; under the pointer it takes the
+     plectrum's corner. The shape is the response, not the decoration. */
+  --r-sleeve: 16px;
   --r-pick: 16px 16px 16px 44%;
 
   --fast: 160ms cubic-bezier(0.2, 0.9, 0.24, 1);
   --rail-w: 212px;
-  --queue-w: 296px;
+  --queue-w: 340px;
   --player-h: 86px;
 
   --z-rail: 20;
@@ -88,6 +90,16 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Switching theme changes every colour token at once, so every element that
+   carries a colour transition starts one — hundreds of them, which is what made
+   the toggle feel like it lagged. They are suppressed for one frame while the
+   tokens swap. The orb is exempt: its turn is the thing worth watching. */
+.theme-swap *:not(.theme-orb):not(.theme-bite),
+.theme-swap *:not(.theme-orb):not(.theme-bite)::before,
+.theme-swap *:not(.theme-orb):not(.theme-bite)::after {
+  transition: none !important;
+}
 
 body {
   margin: 0;
@@ -187,6 +199,36 @@ nav[aria-label='Views'] button[aria-current='true'] {
 }
 .ghost:hover { border-color: var(--line-strong); color: var(--ink); }
 
+/* The theme control is one shape that the night takes a bite out of: the orb
+   turns and the bite slides across it. Two states, one object, no icon swap. */
+.icon-only { padding: 0; width: 38px; height: 38px; display: grid; place-items: center; }
+
+.theme-orb {
+  position: relative;
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  background: var(--ink-2);
+  overflow: hidden;
+  transition: background var(--fast), transform 420ms cubic-bezier(0.2, 0.9, 0.24, 1);
+}
+.ghost:hover .theme-orb { background: var(--ink); }
+
+.theme-bite {
+  position: absolute;
+  inset: -36% -36% -36% 58%;
+  border-radius: 50%;
+  background: var(--page);
+  transition: transform 420ms cubic-bezier(0.2, 0.9, 0.24, 1);
+  transform: translateX(100%);
+}
+/* Dark: the orb rotates a little and the bite swings in to make a crescent. */
+.is-dark .theme-orb { transform: rotate(-18deg); }
+.is-dark .theme-bite { transform: translateX(-34%); }
+
+/* The rail is a real control: tall enough to grab, and it grows under the
+   pointer so a drag has something to hold. */
+#rail:hover div, #rail:active div { filter: saturate(1.25); }
+
 .shell {
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
@@ -272,6 +314,44 @@ main > h2:not(:first-child), main > .row-head:not(:first-child) { margin-top: 36
 }
 .grid.row > .card { scroll-snap-align: start; }
 
+/* The row carries its own arrows. They sit over the fade at each edge so they
+   never take a column away from the albums. */
+.row-wrap { position: relative; }
+
+.rowarrow {
+  position: absolute;
+  top: 64px;
+  z-index: 2;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast), transform var(--fast), background var(--fast);
+}
+.rowarrow.left  { left: -20px; }
+.rowarrow.right { right: -20px; }
+.row-wrap:hover .rowarrow,
+.rowarrow:focus-visible { opacity: 1; }
+.rowarrow:hover { background: var(--raised); transform: scale(1.08); }
+.rowarrow[disabled] { opacity: 0 !important; pointer-events: none; }
+
+@media (hover: none) { .rowarrow { display: none; } }
+
+/* On a narrow window the arrows tuck inside the row rather than hanging off
+   the side of the page. */
+@media (max-width: 880px) {
+  .rowarrow.left  { left: 2px; }
+  .rowarrow.right { right: 2px; }
+}
+
+/* Scrollbars inside a row are noise; the arrows and the drag are the affordance. */
+.grid.row { scrollbar-width: none; }
+.grid.row::-webkit-scrollbar { display: none; }
+
 .card {
   display: block;
   width: 100%;
@@ -289,13 +369,20 @@ main > h2:not(:first-child), main > .row-head:not(:first-child) { margin-top: 36
   position: relative;
   display: block;
   aspect-ratio: 1;
-  border-radius: var(--r-pick);
+  border-radius: var(--r-sleeve);
   overflow: hidden;
   background: var(--raised);
-  transition: transform var(--fast), box-shadow var(--fast);
+  transition: border-radius 260ms cubic-bezier(0.2, 0.9, 0.24, 1),
+              box-shadow var(--fast);
 }
+.card .t, .card .s { transition: color var(--fast); }
+.card:hover .s, .card:focus-visible .s { color: var(--ink); }
+
 .card:hover .sleeve,
-.card:focus-visible .sleeve { transform: translateY(-3px); }
+.card:focus-visible .sleeve {
+  border-radius: var(--r-pick);
+  box-shadow: 0 14px 30px -14px rgb(0 0 0 / 0.34);
+}
 
 .sleeve img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
@@ -318,8 +405,8 @@ main > h2:not(:first-child), main > .row-head:not(:first-child) { margin-top: 36
   position: absolute;
   right: 10px;
   bottom: 10px;
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   border: 0;
@@ -328,13 +415,13 @@ main > h2:not(:first-child), main > .row-head:not(:first-child) { margin-top: 36
   color: var(--page);
   cursor: pointer;
   opacity: 0;
-  transform: scale(0.8);
+  transform: scale(0.72) translateY(6px);
   transition: opacity var(--fast), transform var(--fast), background var(--fast);
 }
 .card:hover .pick,
 .card:focus-within .pick,
 .pick:focus-visible { opacity: 1; transform: none; }
-.pick:hover { background: var(--ink-2); }
+.pick:hover { background: var(--ink-2); transform: scale(1.08); }
 
 .card .t {
   display: block;
@@ -451,21 +538,59 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
 
 /* ---- right queue ---- */
 
-.queue-panel {
+/* The right column is two panels sharing one sticky block: what is playing,
+   then what follows it. */
+.side {
   position: sticky;
   top: calc(56px + 24px);
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: calc(100vh - var(--player-h) - 104px);
+}
+.side[hidden] { display: none; }
+
+.nowplaying {
+  flex: none;
+  padding: 18px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
-  max-height: calc(100vh - var(--player-h) - 120px);
+  text-align: center;
+}
+.nowplaying .sleeve {
+  width: 100%;
+  margin: 0 auto 16px;
+  font-size: 96px;
+}
+.nowplaying .np-title {
+  font-family: var(--display);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.nowplaying .np-artist { font-size: 15px; color: var(--ink-2); margin-top: 2px; }
+.nowplaying .np-album { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+
+.queue-panel {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
   overflow-y: auto;
 }
-.queue-panel h2 { font-size: 17px; margin-bottom: 2px; }
+.queue-panel h2 { font-size: 16px; margin-bottom: 2px; }
 .queue-panel li { padding: 8px 10px; gap: 10px; }
 .queue-panel li .grow { font-size: 15px; }
 
 /* ---- transport ---- */
+
+body:not(.has-player) .player { display: none; }
+body:not(.has-player) { padding-bottom: 0; }
 
 .player {
   position: fixed;
@@ -481,7 +606,25 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
 }
 
 .now { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.now .sleeve { width: 46px; height: 46px; flex: none; aspect-ratio: auto; font-size: 20px; }
+/* Its own class rather than .sleeve: the shelf sleeve carries an aspect-ratio
+   and hover rules that fought every attempt to pin this one to 56 square. */
+.np-art {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--r-pick);
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 25px;
+  color: var(--on-fill);
+  line-height: 1;
+}
+.np-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.np-art[hidden] { display: none; }
 .now-text { min-width: 0; }
 .now-title {
   font-family: var(--display);
@@ -512,20 +655,53 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
 
 #rail {
   position: absolute;
-  left: 0; right: 0; top: -1px;
-  height: 4px;
+  left: 0; right: 0; top: -7px;
+  height: 14px;
   padding: 0;
   border: 0;
-  background: var(--line);
+  background: none;
   cursor: pointer;
+  touch-action: none;   /* the drag is ours, not the browser's scroll */
+}
+/* The visible line sits inside the taller hit area. */
+#rail::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 6px;
+  height: 4px;
+  background: var(--line);
 }
 #rail div {
-  height: 100%;
+  position: absolute;
+  left: 0; right: 0; top: 6px;
+  height: 4px;
   transform-origin: left;
   transform: scaleX(var(--progress, 0));
   background: linear-gradient(90deg, var(--c1), var(--c2) 38%, var(--c3) 72%, var(--c4));
   transition: transform 220ms linear;
 }
+#rail:hover div, #rail:active div { top: 5px; height: 6px; }
+
+/* The handle marks where you are. It sits at the end of the filled span and
+   grows when the rail is touched, so the target is obvious before the grab. */
+#rail::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(var(--progress, 0) * 100%);
+  width: 13px; height: 13px;
+  margin-left: -6.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--surface);
+  transform: translateY(-50%) scale(var(--handle, 1));
+  transition: transform var(--fast), left 220ms linear;
+  pointer-events: none;
+}
+#rail:hover::after, #rail:active::after, #rail:focus-visible::after { --handle: 1.35; }
+#rail:active::after { transition: transform var(--fast); }
+body:not(.has-player) #rail::after { display: none; }
+#rail:active div { transition: none; } /* a drag must not lag the pointer */
 
 .time { font-size: 12px; color: var(--ink-3); font-feature-settings: 'tnum'; flex: none; }
 
@@ -569,7 +745,7 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
   text-align: left; cursor: pointer;
 }
 .hit:hover, .hit:focus-visible { background: var(--raised); }
-.hit .sleeve { grid-row: 1 / 3; width: 46px; height: 46px; aspect-ratio: auto; border-radius: 12px 12px 12px 40%; }
+.hit .sleeve { grid-row: 1 / 3; width: 46px; height: 46px; aspect-ratio: auto; border-radius: 12px; }
 .hit .sleeve.empty { font-size: 20px; }
 .hit-t {
   font-family: var(--display); font-weight: 700; font-size: 15px;
@@ -598,25 +774,53 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
 }
 .empty .sub { font-size: 15px; }
 
-.busy { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 15px; }
-.spinner {
-  width: 15px; height: 15px; flex: none;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--ink);
-  border-radius: 50%;
-  animation: spin 640ms linear infinite;
+.busy { display: flex; align-items: center; gap: 12px; color: var(--ink-2); font-size: 15px; }
+
+/* Four picks, one per palette colour, rising and falling in turn. It is the
+   product's own mark doing the waiting rather than a borrowed spinner. */
+.picks { display: flex; align-items: flex-end; gap: 4px; height: 22px; flex: none; }
+.picks i {
+  width: 7px; height: 8px;
+  border-radius: 3px 3px 3px 60%;
+  animation: lilt 1s ease-in-out infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.picks i:nth-child(1) { background: var(--c1); animation-delay: 0ms; }
+.picks i:nth-child(2) { background: var(--c2); animation-delay: 120ms; }
+.picks i:nth-child(3) { background: var(--c3); animation-delay: 240ms; }
+.picks i:nth-child(4) { background: var(--c4); animation-delay: 360ms; }
+@keyframes lilt {
+  0%, 100% { height: 8px; }
+  50%      { height: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .picks i { height: 15px; animation: none; }
+}
 
 .skeleton { background: var(--raised); border-radius: var(--r-sm); }
 .skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 26px 20px; }
-.skeleton-art { aspect-ratio: 1; border-radius: var(--r-pick); }
+.skeleton-art { aspect-ratio: 1; border-radius: var(--r-sleeve); }
 .skeleton-line { height: 12px; margin-top: 10px; }
 .skeleton-line.short { width: 55%; }
 .skeleton-row { height: 44px; margin-bottom: 2px; }
 
 .pager { display: flex; align-items: center; gap: 16px; margin-top: 26px; }
 .pager .action { margin-bottom: 0; }
+
+.newpl, .renamepl { display: flex; gap: 8px; align-items: center; margin-bottom: 18px; }
+.renamepl { margin: 0; flex: 1; }
+.newpl input, .renamepl input {
+  flex: 1;
+  max-width: 340px;
+  padding: 10px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: 15px;
+}
+.newpl input:focus, .renamepl input:focus { border-color: var(--line-strong); }
+.newpl .action, .renamepl .action { margin: 0; }
+
+.actions { margin-bottom: 20px; }
 
 .steps { margin: 0 0 14px; padding-left: 1.2rem; color: var(--ink-2); font-size: 15px; line-height: 1.7; }
 
@@ -657,9 +861,11 @@ li .dur { font-size: 13px; color: var(--ink-3); font-feature-settings: 'tnum'; f
 
 /* ---- responsive ---- */
 
+/* Below this the third column would squeeze the shelf, so the right panel goes
+   and the transport carries what is playing on its own. */
 @media (max-width: 1180px) {
   body.has-queue .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
-  .queue-panel { display: none; }
+  .side { display: none; }
 }
 
 @media (max-width: 880px) {
