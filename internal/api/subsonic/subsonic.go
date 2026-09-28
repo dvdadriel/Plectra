@@ -94,6 +94,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request, method string) {
 		res, err = a.getAlbum(ctx, r)
 	case "getAlbumList2", "getAlbumList":
 		res, err = a.getAlbumList(ctx, r, method)
+	case "getRandomSongs":
+		res, err = a.getRandomSongs(ctx, r)
 	case "getSong":
 		res, err = a.getSong(ctx, r)
 	case "search3", "search2":

@@ -30,6 +30,13 @@ func (c *Catalog) Tracks(ctx context.Context, ids []int64) ([]store.Track, error
 	return c.st.TracksByIDs(ctx, ids)
 }
 
+// AllTracks is the whole library in one slice. Only callers that genuinely
+// need every row use it; a personal library fits in memory and the scanner
+// already reads it whole.
+func (c *Catalog) AllTracks(ctx context.Context) ([]store.Track, error) {
+	return c.st.AllTracks(ctx)
+}
+
 func (c *Catalog) Search(ctx context.Context, q string, limit int) (store.SearchResult, error) {
 	return c.st.Search(ctx, q, limit)
 }

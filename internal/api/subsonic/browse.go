@@ -165,6 +165,39 @@ func toAlbumID3(al store.Album, songs []store.Track) albumID3 {
 	return out
 }
 
+// getRandomSongs is the shuffle button most clients open with. Tracks with no
+// file are left out: the client fetches them over /rest/stream, and a row with
+// nothing on disk would be handed to it only to fail.
+//
+// genre, fromYear, toYear and musicFolderId are accepted and ignored rather
+// than answered wrongly; Plectra has one folder and stores no genre.
+func (a *API) getRandomSongs(ctx context.Context, r *http.Request) (response, error) {
+	tracks, err := a.cat.AllTracks(ctx)
+	if err != nil {
+		return response{}, err
+	}
+	playable := tracks[:0]
+	for _, t := range tracks {
+		if t.Path != "" {
+			playable = append(playable, t)
+		}
+	}
+	rand.Shuffle(len(playable), func(i, j int) { playable[i], playable[j] = playable[j], playable[i] })
+
+	size := intParam(r, "size", 10)
+	if size > len(playable) {
+		size = len(playable)
+	}
+	starred := a.starredSet(ctx)
+	out := &songList{Song: []child{}}
+	for _, t := range playable[:size] {
+		out.Song = append(out.Song, a.toChild(t, starred))
+	}
+	res := okResponse()
+	res.RandomSongs = out
+	return res, nil
+}
+
 func (a *API) getAlbum(ctx context.Context, r *http.Request) (response, error) {
 	id, ok := parseID(r.Form.Get("id"), "al-")
 	if !ok {

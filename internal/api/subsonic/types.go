@@ -29,6 +29,7 @@ type response struct {
 	Playlist      *playlistWithSongs `xml:"playlist,omitempty" json:"playlist,omitempty"`
 	Starred       *starredResult     `xml:"starred,omitempty" json:"starred,omitempty"`
 	Starred2      *starredResult     `xml:"starred2,omitempty" json:"starred2,omitempty"`
+	RandomSongs   *songList          `xml:"randomSongs,omitempty" json:"randomSongs,omitempty"`
 	JukeboxStatus *jukeboxStatus     `xml:"jukeboxStatus,omitempty" json:"jukeboxStatus,omitempty"`
 	JukeboxPlay   *jukeboxPlaylist   `xml:"jukeboxPlaylist,omitempty" json:"jukeboxPlaylist,omitempty"`
 }
@@ -123,6 +124,10 @@ type searchResult struct {
 	Artist []artist   `xml:"artist" json:"artist"`
 	Album  []albumID3 `xml:"album" json:"album"`
 	Song   []child    `xml:"song" json:"song"`
+}
+
+type songList struct {
+	Song []child `xml:"song" json:"song"`
 }
 
 type playlistList struct {

@@ -106,6 +106,9 @@ type jBody struct {
 	Starred2 *struct {
 		Song []jSong `json:"song"`
 	} `json:"starred2"`
+	RandomSongs *struct {
+		Song []jSong `json:"song"`
+	} `json:"randomSongs"`
 	JukeboxStatus   *jStatus `json:"jukeboxStatus"`
 	JukeboxPlaylist *struct {
 		jStatus
@@ -585,6 +588,39 @@ func TestBrowseShapeOverFixtureLibrary(t *testing.T) {
 	sr := h.ok(t, "search3", url.Values{"query": {"Col"}})
 	if len(sr.SearchResult3.Song) != 1 || sr.SearchResult3.Song[0].Title != "Cold Evening" {
 		t.Fatalf("search3 Col = %+v, want Cold Evening only", sr.SearchResult3.Song)
+	}
+}
+
+// getRandomSongs is the shuffle button. It must respect size, and it must never
+// hand back a row with no file: the client streams these itself.
+func TestRandomSongsAreSizedAndPlayable(t *testing.T) {
+	h := newHarness(t, testPass)
+
+	// A track with no file on disk — the shape an adopted catalogue track has.
+	external, err := h.st.UpsertTrack(t.Context(), store.Track{
+		Title: "Streamed Only", Artist: "Alpha Band", Album: "First Light",
+		FileHash: "ext:streamed-only", DurationMS: 240000,
+	})
+	if err != nil {
+		t.Fatalf("UpsertTrack external: %v", err)
+	}
+
+	all := h.ok(t, "getRandomSongs", url.Values{"size": {"50"}})
+	if all.RandomSongs == nil {
+		t.Fatal("getRandomSongs returned no randomSongs element")
+	}
+	if len(all.RandomSongs.Song) != len(h.tracks) {
+		t.Fatalf("got %d songs, want the %d with files", len(all.RandomSongs.Song), len(h.tracks))
+	}
+	for _, s := range all.RandomSongs.Song {
+		if s.ID == songID(external) {
+			t.Fatalf("returned %q, which has no file to stream", s.Title)
+		}
+	}
+
+	one := h.ok(t, "getRandomSongs", url.Values{"size": {"1"}})
+	if len(one.RandomSongs.Song) != 1 {
+		t.Fatalf("size=1 returned %d songs", len(one.RandomSongs.Song))
 	}
 }
 
