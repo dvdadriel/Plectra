@@ -188,3 +188,42 @@ func ids(ts []Track) []int64 {
 	}
 	return out
 }
+
+// A length learned later fills a blank, but never overwrites one the file
+// itself reported: the scanner measured that, a catalogue only guessed.
+func TestSetTrackDurationOnlyFillsBlanks(t *testing.T) {
+	st, ctx := newTestStore(t)
+	blank := addTrack(t, st, ctx, "Unmeasured", "Queen", "Singles")
+	known, err := st.UpsertTrack(ctx, Track{
+		Title: "Measured", Artist: "Queen", Album: "Singles", DiscNo: 1,
+		Path: "/music/Measured.flac", FileHash: "measured", DurationMS: 100000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.SetTrackDuration(ctx, blank, 240000); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetTrackDuration(ctx, known, 999000); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetTrackDuration(ctx, blank, 0); err != nil {
+		t.Fatalf("a zero length is nothing to record, not an error: %v", err)
+	}
+
+	got, err := st.TracksByIDs(ctx, []int64{blank, known})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]int64{}
+	for _, tr := range got {
+		by[tr.Title] = tr.DurationMS
+	}
+	if by["Unmeasured"] != 240000 {
+		t.Fatalf("blank duration = %d, want 240000", by["Unmeasured"])
+	}
+	if by["Measured"] != 100000 {
+		t.Fatalf("measured duration = %d, want it left at 100000", by["Measured"])
+	}
+}

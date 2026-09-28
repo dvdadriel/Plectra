@@ -37,6 +37,12 @@ func (c *Catalog) AllTracks(ctx context.Context) ([]store.Track, error) {
 	return c.st.AllTracks(ctx)
 }
 
+// SetDuration records a length learned after the row was written, which is how
+// a track with no file on disk ever gets one.
+func (c *Catalog) SetDuration(ctx context.Context, id int64, ms int64) error {
+	return c.st.SetTrackDuration(ctx, id, ms)
+}
+
 func (c *Catalog) Search(ctx context.Context, q string, limit int) (store.SearchResult, error) {
 	return c.st.Search(ctx, q, limit)
 }

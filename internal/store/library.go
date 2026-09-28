@@ -365,6 +365,18 @@ func (s *Store) AlbumCover(ctx context.Context, albumID int64) (string, error) {
 	return cover.String, nil
 }
 
+// SetTrackDuration fills in a length that was not known when the row was
+// written. Only a track that has none is touched: what the file itself reported
+// outranks anything a catalogue says about it later.
+func (s *Store) SetTrackDuration(ctx context.Context, id, ms int64) error {
+	if ms <= 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tracks SET duration_ms = ? WHERE id = ? AND duration_ms = 0`, ms, id)
+	return err
+}
+
 // AllTracks is used to build match indexes for imports.
 func (s *Store) AllTracks(ctx context.Context) ([]Track, error) {
 	rows, err := s.db.QueryContext(ctx, trackSelect)

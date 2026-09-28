@@ -107,7 +107,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	api := native.New(catalog.New(st), playlist.New(st), pl, assets).
+	cat := catalog.New(st)
+	api := native.New(cat, playlist.New(st), pl, assets).
 		WithHistory(recorder).
 		WithLibrary(scanner).
 		WithCoverCache(*coverDir)
@@ -152,6 +153,14 @@ func main() {
 		if len(found) == 0 {
 			return "", fmt.Errorf("no candidate for %s — %s", t.Artist, t.Title)
 		}
+		// A track with no file has no length until something measures it. The
+		// search result carries one, so the row learns it the first time it
+		// plays — which is what makes the seek bar work on it afterwards.
+		if t.ID != 0 && t.DurationMS == 0 && found[0].DurationMS > 0 {
+			if err := cat.SetDuration(ctx, t.ID, found[0].DurationMS); err != nil {
+				log.Printf("record duration for %s: %v", t.Title, err)
+			}
+		}
 		return sources.Resolve(ctx, found[0])
 	}
 	if names := sources.Names(); len(names) > 0 {
@@ -166,7 +175,7 @@ func main() {
 
 	// OpenSubsonic is the one surface reachable from other devices, so it stays
 	// off until a password is set.
-	sub := subsonic.New(catalog.New(st), playlist.New(st), pl, recorder, *subUser, *subPass)
+	sub := subsonic.New(cat, playlist.New(st), pl, recorder, *subUser, *subPass)
 	if sub.Enabled() {
 		mux := http.NewServeMux()
 		mux.Handle("/rest/", sub.Handler())
