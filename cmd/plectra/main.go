@@ -48,7 +48,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
 	enrich := flag.Bool("enrich", true, "look up metadata from MusicBrainz")
 	subUser := flag.String("subsonic-user", "plectra", "username for OpenSubsonic clients")
-	subPass := flag.String("subsonic-password", os.Getenv("PLECTRA_PASSWORD"), "password for OpenSubsonic clients; empty disables the API")
+	subPass := flag.String("subsonic-password", firstEnv("PLECTRA_PASSWORD", "subsonic-password"), "password for OpenSubsonic clients; empty disables the API")
 	scanOnly := flag.Bool("scan", false, "scan the library and exit")
 	scanOnStart := flag.Bool("scan-on-start", false, "scan the library at startup")
 	watch := flag.Bool("watch", false, "watch the library directory and import changes as they happen")
