@@ -167,6 +167,7 @@ func (s *Store) MostPlayedAlbums(ctx context.Context, limit int) ([]Album, error
 // a column that does not exist.
 func (s *Store) NewestAlbums(ctx context.Context, limit int) ([]Album, error) {
 	rows, err := s.db.QueryContext(ctx, albumSelect+`
+		WHERE `+onDisk+`
 		ORDER BY al.id DESC
 		LIMIT ?`, limit)
 	if err != nil {

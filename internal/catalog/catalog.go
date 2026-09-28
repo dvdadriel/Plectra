@@ -4,7 +4,10 @@ package catalog
 
 import (
 	"context"
+	"errors"
+	"strings"
 
+	"github.com/plectra/plectra/internal/match"
 	"github.com/plectra/plectra/internal/store"
 )
 
@@ -46,4 +49,45 @@ func (c *Catalog) ArtistAlbumCounts(ctx context.Context) (map[int64]int, error) 
 // Cover is the on-disk path of an album's cached artwork.
 func (c *Catalog) Cover(ctx context.Context, albumID int64) (string, error) {
 	return c.st.AlbumCover(ctx, albumID)
+}
+
+// Adopt gives a track Plectra does not have on disk a row of its own, so it can
+// be liked, put in a playlist and queued like anything else. The path stays
+// empty: that is what tells the player to resolve a stream when it lands on it.
+// Adopting the same track twice returns the same row.
+func (c *Catalog) Adopt(ctx context.Context, t store.Track) (store.Track, error) {
+	t.Title = strings.TrimSpace(t.Title)
+	if t.Title == "" {
+		return store.Track{}, errors.New("a title is required")
+	}
+	t.Artist = strings.TrimSpace(t.Artist)
+	if t.Artist == "" {
+		t.Artist = "Unknown artist"
+	}
+	t.Album = strings.TrimSpace(t.Album)
+	if t.Album == "" {
+		t.Album = "Singles"
+	}
+	t.Path = ""
+	t.FileHash = ExternalHash(t.Artist, t.Album, t.Title)
+
+	id, err := c.st.UpsertTrack(ctx, t)
+	if err != nil {
+		return store.Track{}, err
+	}
+	ts, err := c.st.TracksByIDs(ctx, []int64{id})
+	if err != nil {
+		return store.Track{}, err
+	}
+	if len(ts) == 0 {
+		return store.Track{}, store.ErrNotFound
+	}
+	return ts[0], nil
+}
+
+// ExternalHash is the identity of a track that has no file. The "ext:" prefix
+// keeps it out of the space of content hashes the scanner writes.
+func ExternalHash(artist, album, title string) string {
+	return "ext:" + match.Normalize(artist) + "\x1f" +
+		match.Normalize(album) + "\x1f" + match.Normalize(title)
 }

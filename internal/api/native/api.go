@@ -69,6 +69,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/playlists/{id}/tracks", a.addToPlaylist)
 	mux.HandleFunc("DELETE /api/playlists/{id}/tracks/{trackID}", a.removeFromPlaylist)
 
+	mux.HandleFunc("POST /api/external/adopt", a.adoptExternal)
+
 	mux.HandleFunc("GET /api/likes", a.likes)
 	mux.HandleFunc("POST /api/likes/{id}", a.like)
 	mux.HandleFunc("DELETE /api/likes/{id}", a.unlike)
@@ -350,6 +352,31 @@ func (a *API) removeFromPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// adoptExternal gives a track from a catalogue a row in the library so the rest
+// of the product — likes, playlists, the queue — can refer to it by id like
+// anything else. It has no file; the player resolves a stream when it plays.
+// Adopting a track twice returns the row it already has.
+func (a *API) adoptExternal(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Title      string `json:"title"`
+		Artist     string `json:"artist"`
+		Album      string `json:"album"`
+		DurationMS int64  `json:"durationMs"`
+	}
+	if err := decode(r, &b); err != nil {
+		http.Error(w, "bad body", 400)
+		return
+	}
+	t, err := a.cat.Adopt(r.Context(), store.Track{
+		Title: b.Title, Artist: b.Artist, Album: b.Album, DurationMS: b.DurationMS,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	writeJSON(w, t)
 }
 
 func (a *API) likes(w http.ResponseWriter, r *http.Request) {

@@ -87,7 +87,10 @@ type Player struct {
 	// Called on its own goroutine, never on the pump loop.
 	Resolve func(ctx context.Context, t store.Track) (string, error)
 
-	resolving      atomic.Bool
+	// resolveGen numbers lookups so a slow one cannot answer for a track the
+	// listener has already moved off. It replaces a single in-flight flag,
+	// which used to make every play pressed during a lookup do nothing at all.
+	resolveGen     atomic.Int64
 	pendingResolve int // queue entry to open once the current audio drains, or -1
 	freshAt        int // index whose expiring location was just resolved, or -1
 }
@@ -271,7 +274,7 @@ func (p *Player) handle(c command) {
 	case "resolved":
 		// The listener may have moved on while the lookup ran; only the entry
 		// that was asked for is filled in, and it only starts if it is still
-		// the one selected.
+		// the one selected. A newer lookup has already been discarded above.
 		if c.index >= 0 && c.index < len(p.queue) {
 			p.queue[c.index].Path = c.s
 			p.freshAt = c.index // this one location is trusted, once
@@ -394,14 +397,14 @@ func (p *Player) startResolve(index int) {
 		p.emit(Event{Type: "error", Message: "no source can play this track"})
 		return
 	}
-	if !p.resolving.CompareAndSwap(false, true) {
-		return
-	}
+	gen := p.resolveGen.Add(1)
 	t := p.queue[index]
 	p.emit(Event{Type: "resolving", Message: t.Title})
 	go func() {
-		defer p.resolving.Store(false)
 		loc, err := p.Resolve(context.Background(), t)
+		if p.resolveGen.Load() != gen {
+			return // the listener picked something else while this ran
+		}
 		if err != nil || loc == "" {
 			p.emit(Event{Type: "error", Message: "no stream found for " + t.Title})
 			return

@@ -69,7 +69,10 @@ func (a *API) sourcePlay(w http.ResponseWriter, r *http.Request) {
 			Artist  string `json:"artist"`
 			LocalID int64  `json:"localId"`
 		} `json:"album"`
-		StartIndex int `json:"startIndex"`
+		// AlbumTitle names the record the listing came from, so adopted rows
+		// land under it instead of scattering into "Singles".
+		AlbumTitle string `json:"albumTitle"`
+		StartIndex int    `json:"startIndex"`
 	}
 	if err := decode(r, &req); err != nil || req.ID == "" || req.Provider == "" {
 		http.Error(w, "a candidate with id and provider is required", 400)
@@ -88,10 +91,18 @@ func (a *API) sourcePlay(w http.ResponseWriter, r *http.Request) {
 
 	// No listing came with it: play the one track, as before.
 	if len(req.Album) == 0 {
-		a.pl.Play([]store.Track{{
+		t := store.Track{
 			Path: location, Title: title, Artist: req.Artist,
 			DurationMS: req.DurationMS, Ephemeral: true,
-		}}, 0)
+		}
+		// An adopted row gives the entry an id, which is what lets the
+		// transport's heart and the queue's rows act on it at all.
+		if row, err := a.cat.Adopt(r.Context(), store.Track{
+			Title: title, Artist: req.Artist, Album: req.AlbumTitle, DurationMS: req.DurationMS,
+		}); err == nil {
+			t.ID, t.AlbumID, t.ArtistID, t.Album = row.ID, row.AlbumID, row.ArtistID, row.Album
+		}
+		a.pl.Play([]store.Track{t}, 0)
 		writeJSON(w, a.pl.State())
 		return
 	}
@@ -99,6 +110,22 @@ func (a *API) sourcePlay(w http.ResponseWriter, r *http.Request) {
 	start := req.StartIndex
 	if start < 0 || start >= len(req.Album) {
 		start = 0
+	}
+
+	// Every row that is not already in the library gets adopted, so the whole
+	// queue is addressable by id: liking what is playing, clicking a row in the
+	// queue and dropping one into a playlist all go through track ids.
+	for i, row := range req.Album {
+		if row.LocalID > 0 {
+			continue
+		}
+		adopted, err := a.cat.Adopt(r.Context(), store.Track{
+			Title: row.Title, Artist: row.Artist, Album: req.AlbumTitle,
+		})
+		if err != nil {
+			continue // an unadoptable row still plays, it just has no id
+		}
+		req.Album[i].LocalID = adopted.ID
 	}
 
 	// Rows the library already has keep their real file, so they play at once
@@ -122,11 +149,16 @@ func (a *API) sourcePlay(w http.ResponseWriter, r *http.Request) {
 	for i, row := range req.Album {
 		switch {
 		case i == start:
-			// The one that was clicked is already resolved.
-			queue = append(queue, store.Track{
+			// The one that was clicked is already resolved. It keeps the id of
+			// its row so the heart and the playlist menu can reach it.
+			t := store.Track{
 				Path: location, Title: title, Artist: req.Artist,
 				DurationMS: req.DurationMS, Ephemeral: true,
-			})
+			}
+			if lt, ok := local[row.LocalID]; ok {
+				t.ID, t.AlbumID, t.ArtistID, t.Album, t.HasCover = lt.ID, lt.AlbumID, lt.ArtistID, lt.Album, lt.HasCover
+			}
+			queue = append(queue, t)
 		case row.LocalID > 0:
 			if t, ok := local[row.LocalID]; ok {
 				queue = append(queue, t)

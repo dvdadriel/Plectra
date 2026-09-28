@@ -374,3 +374,62 @@ func TestAlbumsWithoutALimitStillAnswerAPlainList(t *testing.T) {
 		t.Errorf("got %d albums, want both", len(al))
 	}
 }
+
+// A track from a catalogue has no library row, which used to put likes,
+// playlists and the queue out of reach for everything that was not on disk.
+// Adopting it gives it an id, and every one of those then works unchanged.
+func TestAdoptedExternalTrackCanBeLikedQueuedAndFiled(t *testing.T) {
+	h := newHarness(t)
+
+	rec := h.do(t, "POST", "/api/external/adopt",
+		`{"title":"Far Away","artist":"Gamma Trio","album":"Elsewhere","durationMs":198000}`)
+	if rec.Code != 200 {
+		t.Fatalf("adopt: %d %s", rec.Code, rec.Body.String())
+	}
+	var adopted store.Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &adopted); err != nil {
+		t.Fatal(err)
+	}
+	if adopted.ID == 0 {
+		t.Fatalf("adopted track has no id: %+v", adopted)
+	}
+
+	// Adopting twice must not create a second row.
+	rec = h.do(t, "POST", "/api/external/adopt",
+		`{"title":"Far Away","artist":"Gamma Trio","album":"Elsewhere","durationMs":198000}`)
+	var again store.Track
+	json.Unmarshal(rec.Body.Bytes(), &again)
+	if again.ID != adopted.ID {
+		t.Fatalf("second adopt made a new row: %d then %d", adopted.ID, again.ID)
+	}
+
+	id := fmt.Sprint(adopted.ID)
+	if rec := h.do(t, "POST", "/api/likes/"+id, ""); rec.Code != 204 {
+		t.Fatalf("like: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = h.do(t, "GET", "/api/likes", "")
+	var likes []store.Track
+	json.Unmarshal(rec.Body.Bytes(), &likes)
+	if len(likes) != 1 || likes[0].ID != adopted.ID {
+		t.Fatalf("likes = %+v; want the adopted track", likes)
+	}
+
+	rec = h.do(t, "POST", "/api/playlists", `{"name":"Elsewhere"}`)
+	var pl store.Playlist
+	json.Unmarshal(rec.Body.Bytes(), &pl)
+	if rec := h.do(t, "POST", fmt.Sprintf("/api/playlists/%d/tracks", pl.ID),
+		fmt.Sprintf(`{"trackIDs":[%d]}`, adopted.ID)); rec.Code != 204 {
+		t.Fatalf("add to playlist: %d %s", rec.Code, rec.Body.String())
+	}
+
+	st := h.state(t, "POST", "/api/player/queue", fmt.Sprintf(`{"trackIDs":[%d]}`, adopted.ID))
+	if len(st.Queue) != 1 || st.Queue[0].Title != "Far Away" {
+		t.Fatalf("queue = %+v; want the adopted track", st.Queue)
+	}
+
+	// It has no file, so it must stay out of the shelf of what is on disk.
+	rec = h.do(t, "GET", "/api/albums", "")
+	if strings.Contains(rec.Body.String(), "Elsewhere") {
+		t.Errorf("an album with no files reached the shelf: %s", rec.Body.String())
+	}
+}

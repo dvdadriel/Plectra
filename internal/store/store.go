@@ -131,11 +131,19 @@ func (s *Store) KnownMTime(ctx context.Context, path string) (int64, bool) {
 	return m, err == nil
 }
 
+// onDisk keeps albums made only of adopted catalogue tracks out of the views
+// that claim to show the library. Those rows exist so a track that is not on
+// disk can still be liked, queued and filed; they were never scanned, and a
+// shelf that listed them would be lying about what Plectra holds.
+const onDisk = `EXISTS (SELECT 1 FROM tracks t WHERE t.album_id = al.id AND t.path <> '')`
+
+// Albums lists every album with at least one file, by artist.
 func (s *Store) Albums(ctx context.Context) ([]Album, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0),
 		        al.cover_path IS NOT NULL AND al.cover_path <> ''
 		 FROM albums al JOIN artists ar ON ar.id = al.artist_id
+		 WHERE `+onDisk+`
 		 ORDER BY ar.name, al.year, al.title`)
 	if err != nil {
 		return nil, err

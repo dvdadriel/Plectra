@@ -108,6 +108,14 @@ const ICON = {
 const get = p => fetch('/api' + p).then(r => r.ok ? r.json() : null);
 const post = (p, body) => fetch('/api' + p, {method: 'POST', body: body && JSON.stringify(body)});
 const del = p => fetch('/api' + p, {method: 'DELETE'});
+
+// A track from a catalogue has no id until Plectra keeps a row for it. Keeping,
+// queueing or filing one into a playlist is what asks for that row; from then
+// on it is an ordinary track id and every other feature works on it unchanged.
+const adopt = info => post('/external/adopt', {
+  title: info.title, artist: info.artist,
+  album: info.album || '', durationMs: info.durationMs || 0,
+}).then(r => r.ok ? r.json() : null);
 const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
 // A duration of 0 means "not probed yet", not "zero seconds". Show nothing.
@@ -118,6 +126,14 @@ const mmss = ms => {
 };
 
 let view = 'home', state = {}, liked = new Set(), searchTimer, playlistID = null;
+
+// Opening anything cancels what the last panel was still waiting for. A
+// catalogue listing takes seconds; without this, the answer to a question
+// nobody is asking any more lands inside the panel that replaced it, and the
+// album you just opened shows the tracks of the one before it.
+let nav = 0;
+const claim = () => ++nav;
+const stale = mine => mine !== nav;
 
 /* ---- theme: system unless the listener forced one ---- */
 const themeBtn = $('#theme');
@@ -361,10 +377,12 @@ function pagedList(items, opts = {}) {
 // wherever the listener came from — grid, search results or Find.
 async function openAlbum(id) {
   const m = $('#main');
+  const mine = claim();
   page = 0;
   repaint = () => openAlbum(id);
   m.innerHTML = skeletonRows();
   const al = await get('/albums/' + id);
+  if (stale(mine)) return;
   if (!al) return m.innerHTML = emptyState('That album is gone.', 'It may have been removed from the library since this page was drawn.');
 
   listing = al.tracks || [];
@@ -407,6 +425,7 @@ async function openAlbum(id) {
 // that is going to take five seconds without warning.
 async function openCatalogueAlbum(info, autoplay) {
   const m = $('#main');
+  const mine = claim();
   page = 0;
   repaint = () => openCatalogueAlbum(info, false);
   m.innerHTML = skeletonRows();
@@ -425,23 +444,32 @@ async function openCatalogueAlbum(info, autoplay) {
   $('#albumback').onclick = () => render();
 
   const tracks = (await get('/browse/album?id=' + encodeURIComponent(info.mbid))) || [];
+  if (stale(mine)) return; // the listener opened something else while the catalogue thought
   const box = $('#album-tracks');
-  if (!box) return; // the listener navigated away while MusicBrainz was thinking
+  if (!box) return;
   if (!tracks.length) {
     box.innerHTML = '<p class="sub">No track list for this album. The catalogue did not answer — try again, or play it from the files as they are.</p>';
     return;
   }
-  box.innerHTML = '<ul>' + tracks.map((t, i) => `
-    <li>
+  // Every row carries what it takes to keep it, whether or not the file is on
+  // disk: a track Plectra does not own is given a library row the moment it is
+  // liked or queued, so nothing here is a second-class song.
+  box.innerHTML = '<ul>' + tracks.map(t => {
+    const sp = {localId: t.localId || 0, artist: t.artist, title: t.title,
+                album: info.title, durationMs: t.durationMs || 0};
+    const on = !!t.localId && liked.has(t.localId);
+    return `<li>
       <span class="no">${t.position || ''}</span>
-      <button class="grow" data-sp='${esc(JSON.stringify({localId: t.localId || 0, artist: t.artist, title: t.title}))}'>
+      <button class="grow" data-sp='${esc(JSON.stringify(sp))}'>
         ${esc(t.title)} <span class="sub">— ${esc(t.artist)}</span>
       </button>
       <span class="dur">${mmss(t.durationMs)}</span>
       <span class="meta" data-mark="${t.localId ? 'library' : 'external'}">${t.localId ? 'library' : 'external'}</span>
-      ${t.localId ? `<button class="icon" data-enq='{"trackIDs":[${t.localId}]}'
-            aria-label="Add ${esc(t.title)} to the queue">+</button>` : ''}
-    </li>`).join('') + '</ul>';
+      <button class="icon" data-splike aria-pressed="${on}"
+              aria-label="${on ? 'Unlike' : 'Like'} ${esc(t.title)}">${on ? ICON.heartFull : ICON.heart}</button>
+      <button class="icon" data-spenq aria-label="Add ${esc(t.title)} to the queue">+</button>
+    </li>`;
+  }).join('') + '</ul>';
 
   // Play arrived from a card, so start the album without a second click. The
   // row marks itself while the stream is resolved, which is the only honest
@@ -450,9 +478,11 @@ async function openCatalogueAlbum(info, autoplay) {
 }
 
 async function render() {
+  const mine = claim();
   repaint = () => render();
   showLoading(view === 'home' || view === 'albums' ? 'grid' : 'rows');
   liked = new Set(((await get('/likes')) || []).map(t => t.id));
+  if (stale(mine)) return;
   const m = $('#main');
   playlistID = null;
 
@@ -638,6 +668,10 @@ $('#side').addEventListener('click', onMainClick);
 
 // The dropdown is mounted in the header, not in #main, so it carries its own
 // listener rather than widening the main one.
+// Keeping focus in the search box means it never blurs, so the blur timer
+// never closes the dropdown out from under the click that is landing on it.
+drop.addEventListener('mousedown', e => e.preventDefault());
+
 drop.addEventListener('click', async e => {
   const t = e.target.closest('[data-hit-track]');
   if (t) {
@@ -663,6 +697,34 @@ $('#main').addEventListener('keydown', e => {
 });
 
 async function onMainClick(e) {
+  // Keeping or queueing a row from a catalogue album. It gets a library row of
+  // its own the first time, and behaves like anything else afterwards.
+  const keep = e.target.closest('[data-splike], [data-spenq]');
+  if (keep) {
+    e.stopPropagation();
+    const spBtn = keep.closest('li')?.querySelector('[data-sp]');
+    if (!spBtn) return;
+    const info = JSON.parse(spBtn.dataset.sp);
+    let id = info.localId;
+    if (!id) {
+      const t = await adopt(info);
+      if (!t?.id) return flash('That track could not be kept');
+      id = info.localId = t.id;
+      spBtn.dataset.sp = JSON.stringify(info); // a second click costs no round trip
+    }
+    if (keep.matches('[data-spenq]')) {
+      await post('/player/queue', {trackIDs: [id]});
+      return flash('Added to the queue');
+    }
+    const on = !liked.has(id);
+    await (on ? post('/likes/' + id) : del('/likes/' + id));
+    on ? liked.add(id) : liked.delete(id);
+    keep.innerHTML = on ? ICON.heartFull : ICON.heart;
+    keep.setAttribute('aria-pressed', String(on));
+    paint();
+    return on ? flash('Kept', true) : flash('Let go');
+  }
+
   // A track from a catalogue album: play the local file when there is one,
   // otherwise find it externally and play the best candidate.
   const sp = e.target.closest('[data-sp]');
@@ -670,10 +732,12 @@ async function onMainClick(e) {
     const info = JSON.parse(sp.dataset.sp);
     // The listing the row came from, in order, so the queue is the album and
     // not one lonely track with nothing to skip to.
-    const album = [...sp.closest('ul').querySelectorAll('[data-sp]')]
-      .map(b => JSON.parse(b.dataset.sp))
+    const rows = [...sp.closest('ul').querySelectorAll('[data-sp]')];
+    const album = rows.map(b => JSON.parse(b.dataset.sp))
       .map(x => ({title: x.title, artist: x.artist, localId: x.localId || 0}));
-    const at = info.at ?? 0;
+    // Where the clicked row actually sits. This used to be hard-coded to zero,
+    // which made every row in a catalogue album start the album's first track.
+    const at = Math.max(0, rows.indexOf(sp));
 
     if (info.localId) {
       // A local row still queues the whole album, taking the files it has.
@@ -704,8 +768,9 @@ async function onMainClick(e) {
     // The external source names tracks its own way, often with the uploader's
     // wording. The listener picked a row out of an album listing, so the player
     // shows that album's title and artist, not whatever the stream is called.
-    const resp = await post('/source/play',
-      {...found[0], title: info.title, artist: info.artist, album, startIndex: at});
+    const resp = await post('/source/play', {...found[0],
+      title: info.title, artist: info.artist,
+      album, albumTitle: info.album || '', startIndex: at});
     if (mark) mark.textContent = resp.ok ? 'playing' : 'could not play';
     if (resp.ok) row?.classList.add('playing');
     return;
@@ -820,13 +885,21 @@ async function onMainClick(e) {
     const i = Number(row.dataset.index);
     const src = row.dataset.list === 'queue' ? (state.queue || []) : listing;
     if (!src.length) return;
-    return post('/player/play', {trackIDs: src.map(t => t.id), startIndex: i});
+    const ids = src.map(t => t.id);
+    // A radio stream has no library row at all. Sending the queue by id would
+    // quietly drop it and start the wrong track, so that one plays on its own.
+    if (ids.some(x => !x)) {
+      return src[i]?.id ? post('/player/play', {trackIDs: [src[i].id], startIndex: 0}) : undefined;
+    }
+    return post('/player/play', {trackIDs: ids, startIndex: i});
   }
 
   const like = e.target.closest('[data-like]');
   if (like) {
     const id = Number(like.dataset.like);
-    await (liked.has(id) ? del('/likes/' + id) : post('/likes/' + id));
+    const on = !liked.has(id);
+    await (on ? post('/likes/' + id) : del('/likes/' + id));
+    flash(on ? 'Kept' : 'Let go', on);
     return render();
   }
 
@@ -835,7 +908,10 @@ async function onMainClick(e) {
     playlistID = Number(open.dataset.open);
     page = 0;
     repaint = async () => {
-      listing = (await get('/playlists/' + playlistID)) || [];
+      const mine = claim();
+      const rows = (await get('/playlists/' + playlistID)) || [];
+      if (stale(mine)) return;
+      listing = rows;
       $('#main').innerHTML = pagedList(listing, {playlist: true});
     };
     await repaint();
@@ -874,11 +950,22 @@ async function onMainClick(e) {
 const toast = Object.assign(document.createElement('div'), {className: 'toast', hidden: true});
 let toastTimer;
 document.body.append(toast);
-function flash(msg) {
-  toast.textContent = msg;
+// Keeping something is the one moment worth marking: the toast wears the
+// logo's four colours and throws off a few sparks. Everything else stays plain,
+// which is what keeps the marked one meaning anything.
+function flash(msg, magical) {
+  toast.className = 'toast' + (magical ? ' magic' : '');
+  toast.innerHTML = (magical
+    ? '<i class="spark s1"></i><i class="spark s2"></i><i class="spark s3"></i><i class="spark s4"></i>'
+    : '') + `<span>${esc(msg)}</span>`;
   toast.hidden = false;
+  // Restarting the animation needs the element off the screen for a frame.
+  if (magical) {
+    toast.style.animation = 'none';
+    requestAnimationFrame(() => toast.style.animation = '');
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.hidden = true, 1800);
+  toastTimer = setTimeout(() => toast.hidden = true, magical ? 2200 : 1800);
 }
 
 $('#q').parentElement.append(drop);
@@ -971,10 +1058,36 @@ function actionsFor(target) {
   const sp = pick('[data-sp]');
   if (sp) {
     const info = JSON.parse(sp.dataset.sp);
+    // A row with no file is kept the same way as one with a file: it is given a
+    // library row when it is first asked for, and then it is just a track.
+    const row = async () => {
+      if (info.localId) return info.localId;
+      const t = await adopt(info);
+      if (!t?.id) return 0;
+      info.localId = t.id;
+      sp.dataset.sp = JSON.stringify(info);
+      return t.id;
+    };
     acts.push({label: 'Play', run: () => sp.click()});
-    if (info.localId) acts.push({label: 'Add to queue', run: async () => {
-      await post('/player/queue', {trackIDs: [info.localId]});
+    acts.push({label: 'Add to queue', run: async () => {
+      const id = await row();
+      if (!id) return flash('That track could not be queued');
+      await post('/player/queue', {trackIDs: [id]});
       flash('Added to the queue');
+    }});
+    acts.push({label: info.localId && liked.has(info.localId) ? 'Unlike' : 'Like', run: async () => {
+      const id = await row();
+      if (!id) return flash('That track could not be kept');
+      const on = !liked.has(id);
+      await (on ? post('/likes/' + id) : del('/likes/' + id));
+      on ? liked.add(id) : liked.delete(id);
+      flash(on ? 'Kept' : 'Let go', on);
+      repaint();
+    }});
+    acts.push({label: 'Add to playlist…', run: async () => {
+      const id = await row();
+      if (!id) return flash('That track could not be filed');
+      playlistMenu(id);
     }});
   }
 
@@ -992,7 +1105,7 @@ function actionsFor(target) {
 async function playlistMenu(trackID) {
   const ls = (await get('/playlists')) || [];
   const r = menu.getBoundingClientRect();
-  const add = id => post(`/playlists/${id}/tracks`, {trackIDs: [trackID]}).then(() => flash('Added to the playlist'));
+  const add = id => post(`/playlists/${id}/tracks`, {trackIDs: [trackID]}).then(() => flash('Filed away', true));
   if (!ls.length) {
     openMenu(r.left, r.top, [{label: 'No playlists yet — make one in Playlists', run: () => {
       view = 'playlists';
@@ -1071,9 +1184,11 @@ $('#vol').oninput = e => post('/player/volume', {level: Number(e.target.value)})
 
 $('#like').onclick = async () => {
   const t = state.queue?.[state.index];
-  if (!t) return;
-  await (liked.has(t.id) ? del('/likes/' + t.id) : post('/likes/' + t.id));
-  liked.has(t.id) ? liked.delete(t.id) : liked.add(t.id);
+  if (!t?.id) return flash('This one has no library row to keep');
+  const on = !liked.has(t.id);
+  await (on ? post('/likes/' + t.id) : del('/likes/' + t.id));
+  on ? liked.add(t.id) : liked.delete(t.id);
+  flash(on ? 'Kept' : 'Let go', on);
   paint();
   if (view === 'likes' || view === 'queue') render();
 };

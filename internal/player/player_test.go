@@ -655,3 +655,36 @@ func TestExpiringLocationsAreResolvedAgainOnReturn(t *testing.T) {
 		t.Errorf("%d lookups after returning, want 2 — the expired link was replayed", lookups)
 	}
 }
+
+// A lookup takes seconds. Anything the listener plays while one is in flight
+// used to be swallowed whole: the player kept its first choice and the second
+// one never started. The newer request must win.
+func TestPlayDuringALookupIsNotSwallowed(t *testing.T) {
+	real := makeQueue(t, 2, 400)
+
+	release := make(chan struct{})
+	p := New(&frozenSink{})
+	p.Resolve = func(_ context.Context, tr store.Track) (string, error) {
+		if tr.Title == "Slow" {
+			<-release // still thinking when the second choice arrives
+		}
+		return real[1].Path, nil
+	}
+
+	p.Play([]store.Track{{Title: "Slow", Artist: "A"}}, 0)
+	waitFor(t, "the slow lookup to be parked", func() bool { return p.State().Index == 0 })
+
+	// A second choice, while the first is still being looked up.
+	p.Play([]store.Track{{Title: "Quick", Artist: "A"}}, 0)
+	waitFor(t, "the second choice to play", func() bool {
+		st := p.State()
+		return st.Playing && len(st.Queue) == 1 && st.Queue[0].Title == "Quick"
+	})
+
+	// The stale answer must not drag the player back.
+	close(release)
+	time.Sleep(150 * time.Millisecond)
+	if got := p.State().Queue[0].Title; got != "Quick" {
+		t.Fatalf("playing %q after the stale lookup landed; want Quick", got)
+	}
+}

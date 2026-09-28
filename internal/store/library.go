@@ -379,7 +379,8 @@ func (s *Store) AlbumsByArtist(ctx context.Context, artistID int64) ([]Album, er
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT al.id, al.title, ar.name, COALESCE(al.year,0)
 		 FROM albums al JOIN artists ar ON ar.id = al.artist_id
-		 WHERE al.artist_id = ? ORDER BY al.year DESC, al.title`, artistID)
+		 WHERE al.artist_id = ? AND `+onDisk+`
+		 ORDER BY al.year DESC, al.title`, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +412,8 @@ func (s *Store) Album(ctx context.Context, id int64) (Album, error) {
 
 // ArtistAlbumCounts reports how many albums each artist has, for browse views.
 func (s *Store) ArtistAlbumCounts(ctx context.Context) (map[int64]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT artist_id, COUNT(*) FROM albums GROUP BY artist_id`)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT al.artist_id, COUNT(*) FROM albums al WHERE `+onDisk+` GROUP BY al.artist_id`)
 	if err != nil {
 		return nil, err
 	}
