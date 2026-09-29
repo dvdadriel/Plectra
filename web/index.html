@@ -700,18 +700,21 @@ $('#main').addEventListener('submit', async e => {
     setupKey = f.k.value;
     return render();
   }
-  if (f.id === 'keys') {
-    // Only what was actually typed is sent: an untouched field must leave the
-    // stored value alone, which is not the same as clearing it.
+  if (f.id === 'setup') {
+    // An untouched secret must keep the value already stored, which is not the
+    // same as clearing it, so a blank password field is left out entirely.
     const body = {};
-    for (const k of KEYS) if (f[k.name].value) body[k.name] = f[k.name].value;
+    for (const el of f.querySelectorAll('input[name]')) {
+      if (el.type === 'password' && !el.value) continue;
+      body[el.name] = el.value;
+    }
     if (!Object.keys(body).length) return flash('Nothing to save');
     const res = await fetch('/api/settings', {
       method: 'PUT',
       headers: setupKey ? {'X-Plectra-Password': setupKey} : {},
       body: JSON.stringify(body),
     });
-    flash(res.ok ? 'Saved. Restart Plectra to apply.' : 'Could not save');
+    flash(res.ok ? 'Saved' : (await res.text()).trim() || 'Could not save');
     return render();
   }
   const name = f.querySelector('input').value.trim();
