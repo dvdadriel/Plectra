@@ -58,7 +58,7 @@
 </div>
 
 <footer class="player">
-  <button id="rail" type="button" aria-label="Seek. Arrow keys move by five seconds."><div></div></button>
+  <button id="rail" type="button" aria-label="Move through the track. Arrow keys jump five seconds."><div></div></button>
   <div class="now">
     <span class="np-art hue-0" id="nowart" aria-hidden="true"></span>
     <div class="now-text">
@@ -220,7 +220,7 @@ const albumCard = a => {
 const albumGrid = albums => albums.length
   ? `<div class="grid">` + albums.map(albumCard).join('') + `</div>`
   : emptyState('The shelf is empty',
-      'Point Plectra at a folder of music, then press Sync local music in Settings.');
+      'Choose the folder your music lives in, then press Look for music in Settings.');
 
 // A row scrolls sideways, so it carries its own way to move: the arrows step by
 // roughly a screenful and disable themselves at each end.
@@ -383,7 +383,7 @@ async function openAlbum(id) {
   m.innerHTML = skeletonRows();
   const al = await get('/albums/' + id);
   if (stale(mine)) return;
-  if (!al) return m.innerHTML = emptyState('That album is gone.', 'It may have been removed from the library since this page was drawn.');
+  if (!al) return m.innerHTML = emptyState('That album has gone.', 'It may have left your collection since this page opened.');
 
   listing = al.tracks || [];
   const total = listing.reduce((sum, t) => sum + (t.durationMs || 0), 0);
@@ -448,7 +448,7 @@ async function openCatalogueAlbum(info, autoplay) {
   const box = $('#album-tracks');
   if (!box) return;
   if (!tracks.length) {
-    box.innerHTML = '<p class="sub">No track list for this album. The catalogue did not answer — try again, or play it from the files as they are.</p>';
+    box.innerHTML = '<p class="sub">The track list for this album did not come through. Try again, or play it as it stands.</p>';
     return;
   }
   // Every row carries what it takes to keep it, whether or not the file is on
@@ -491,7 +491,7 @@ async function render() {
     const sections = (await get('/home')) || [];
     if (!sections.length) {
       return m.innerHTML = emptyState('The shelf is empty',
-        'Point Plectra at a folder of music, then press Sync local music in Settings.');
+        'Choose the folder your music lives in, then press Look for music in Settings.');
     }
     return m.innerHTML = sections.map(sec => `<h2>${esc(sec.title)}</h2>
       <p class="sub">${esc(sec.reason)}${sec.more && sec.total > sec.albums.length
@@ -504,7 +504,7 @@ async function render() {
     const r = (await get(`/albums?limit=${PAGE}&offset=${page * PAGE}`)) || {};
     const albums = r.albums || [];
     return m.innerHTML = `<h2>Your library</h2>
-      <p class="sub">Every album on disk, by artist.</p>
+      <p class="sub">Everything you own, in order of artist.</p>
       ${albumGrid(albums)}
       ${pager((page + 1) * PAGE < (r.total || 0), r.total)}`;
   }
@@ -516,8 +516,8 @@ async function render() {
     const stations = r.stations || [];
     return m.innerHTML = stations.length ? `
       <h2>${q ? 'Stations matching ' + esc(q) : 'Most played stations'}</h2>
-      <p class="sub">Full-length music from licensed broadcasters. Nothing is downloaded,
-        and only stations Plectra can decode (MP3 and Ogg) are listed.</p>
+      <p class="sub">Stations playing music in full, straight through. Nothing is saved to
+        your machine, and stations Plectra cannot play are left out.</p>
       <ul>${stations.map(st => `
         <li>
           <button class="grow" data-station='${esc(JSON.stringify({url: st.url, name: st.name, uuid: st.uuid}))}'>
@@ -528,7 +528,7 @@ async function render() {
         </li>`).join('')}</ul>
       ${pager(r.more)}`
       : (page > 0
-          ? `<p class="sub">No more stations.</p>${pager(false)}`
+          ? `<p class="sub">That is every station.</p>${pager(false)}`
           : emptyState(q ? 'Nothing by that name' : 'The directory is not answering',
               q ? 'No station matches. Try a shorter piece of the name.'
                 : 'Plectra could not reach the station list. Check the connection and try again.'));
@@ -557,26 +557,26 @@ async function render() {
           <button class="icon" data-enq='{"playlistID":${p.id}}' aria-label="Add ${esc(p.name)} to the queue">+</button>
         </li>`).join('')}</ul>`
       : `<h2>Your playlists</h2>
-         <p class="sub">None yet. Create one in Playlists.</p>`;
+         <p class="sub">None yet. Make your first one in Playlists.</p>`;
 
     const recs = suggest.length
       ? suggest.map(sec => `<h2>${esc(sec.title)}</h2>
           <p class="sub">${esc(sec.reason)}</p>
           ${albumRow(sec.albums)}`).join('')
       : `<h2>Nothing to suggest yet</h2>
-         <p class="sub">Recommendations are built from what you actually finish
-           listening to. Play a few things and they appear here.</p>`;
+         <p class="sub">These grow out of the things you play all the way through.
+           Listen to a few and they turn up here.</p>`;
 
     return m.innerHTML = playlists + recs;
   }
   if (view === 'likes') {
     listing = (await get('/likes')) || [];
     if (!listing.length) {
-      return m.innerHTML = emptyState('Nothing liked yet', 'Like a track or an album and it collects here.');
+      return m.innerHTML = emptyState('Nothing kept yet', 'Like a track or an album and it gathers here.');
     }
     const ids = listing.map(t => t.id);
     return m.innerHTML = `<h2>Kept</h2>
-      <p class="sub">${listing.length} track${listing.length === 1 ? '' : 's'} you liked, newest first.</p>
+      <p class="sub">${listing.length} track${listing.length === 1 ? '' : 's'} you liked, most recent first.</p>
       <div class="actions">
         <button class="action primary" data-playids='${esc(JSON.stringify(ids))}'>Play</button>
         <button class="action" id="likeshuffle" data-ids='${esc(JSON.stringify(ids))}'>Shuffle</button>
@@ -620,17 +620,17 @@ async function render() {
 // Scanning is something the user asks for, so the panel reports what the last
 // scan did rather than implying the library keeps itself up to date.
 function scanPanel(scan) {
-  if (!scan) return '<p class="sub">The scanner is unavailable.</p>';
+  if (!scan) return '<p class="sub">Plectra cannot look through your folder right now.</p>';
   const when = scan.finishedAt
-    ? `Last scan ${new Date(scan.finishedAt * 1000).toLocaleString()}: ` +
-      `${scan.scanned} added or updated, ${scan.skipped} unchanged` +
-      (scan.failed ? `, ${scan.failed} failed` : '')
-    : 'No scan yet in this session.';
+    ? `Looked ${new Date(scan.finishedAt * 1000).toLocaleString()}: ` +
+      `${scan.scanned} added or changed, ${scan.skipped} already here` +
+      (scan.failed ? `, ${scan.failed} could not be read` : '')
+    : 'Not looked through yet.';
   return `
     <p class="sub">${esc(scan.root || '')}</p>
-    <p class="sub" id="scanwhen">${scan.running ? 'Scanning…' : esc(when)}</p>
-    ${scan.error ? `<p class="sub">Last error: ${esc(scan.error)}</p>` : ''}
-    <button class="action" id="scan"${scan.running ? ' disabled' : ''}>Sync local music</button>`;
+    <p class="sub" id="scanwhen">${scan.running ? 'Looking through your folder…' : esc(when)}</p>
+    ${scan.error ? `<p class="sub">Last time something went wrong: ${esc(scan.error)}</p>` : ''}
+    <button class="action" id="scan"${scan.running ? ' disabled' : ''}>Look for music</button>`;
 }
 
 
@@ -649,10 +649,10 @@ async function setupPanel() {
   if (res.status === 403) {
     return `
       <h2>Setup</h2>
-      <p class="sub">Locked. Enter the OpenSubsonic password to change these, or
+      <p class="sub">Locked. Enter the listening password to change these, or
          open Plectra on the machine it runs on.</p>
       <form class="setupform" id="unlock">
-        <input type="password" name="k" placeholder="OpenSubsonic password" autocomplete="current-password">
+        <input type="password" name="k" placeholder="Listening password" autocomplete="current-password">
         <button class="action" type="submit">Unlock</button>
       </form>`;
   }
@@ -661,14 +661,13 @@ async function setupPanel() {
   const cfg = await res.json();
   return `
     <h2>Setup</h2>
-    <p class="sub">Saved to <code>${esc(cfg.envPath)}</code>. Everything here is optional
-       except the music folder.</p>
+    <p class="sub">Everything here is optional except the music folder.</p>
     <form class="setupform" id="setup">
       ${cfg.fields.map(f => `
         <label class="setuprow">
           <span class="setuplabel">${esc(f.label)}
             <em>${f.set ? 'set' : 'not set'}</em>
-            ${f.live ? '' : '<em>restart to apply</em>'}</span>
+            ${f.live ? '' : '<em>starts next time</em>'}</span>
           <input name="${esc(f.name)}" type="${f.secret ? 'password' : 'text'}"
                  value="${esc(f.value || '')}"
                  oninput="this.dataset.typed = '1'"
@@ -681,12 +680,12 @@ async function setupPanel() {
     </form>
     <h2>On your phone</h2>
     ${cfg.mobile.ready
-      ? `<p class="sub">Install any Subsonic client, then give it these. Both devices have to be
-           on the same network.</p>
+      ? `<p class="sub">Install any Subsonic app on your phone, then give it these. Both devices
+           need to be on the same network.</p>
          <dl class="conn">
-           <dt>Server</dt><dd><code>${esc(cfg.mobile.url)}</code></dd>
+           <dt>Address</dt><dd><code>${esc(cfg.mobile.url)}</code></dd>
            <dt>Username</dt><dd><code>${esc(cfg.mobile.user)}</code></dd>
-           <dt>Password</dt><dd>the OpenSubsonic password above</dd>
+           <dt>Password</dt><dd>the listening password above</dd>
          </dl>`
       : `<p class="sub">${esc(cfg.mobile.note)}</p>`}`;
 }
@@ -695,7 +694,7 @@ async function settingsPanel() {
   const [scan, setup] = await Promise.all([get('/library/scan'), setupPanel()]);
   return `
     ${setup}
-    <h2>Local music</h2>
+    <h2>Your music folder</h2>
     ${scanPanel(scan)}
 `;
 }
@@ -1264,7 +1263,7 @@ $('#vol').oninput = e => post('/player/volume', {level: Number(e.target.value)})
 
 $('#like').onclick = async () => {
   const t = state.queue?.[state.index];
-  if (!t?.id) return flash('This one has no library row to keep');
+  if (!t?.id) return flash('This one is not in your collection, so there is nothing to keep');
   const on = !liked.has(t.id);
   await (on ? post('/likes/' + t.id) : del('/likes/' + t.id));
   on ? liked.add(t.id) : liked.delete(t.id);
@@ -1373,7 +1372,7 @@ function paint() {
   // One word for both waits the flag covers — finding a stream, and opening
   // one — because the transport is not told which of them it is in.
   toggle.setAttribute('aria-label',
-    loading ? 'Loading' : playing ? 'Pause' : 'Play');
+    loading ? 'Finding it' : playing ? 'Pause' : 'Play');
 
   $('#shuffle').setAttribute('aria-pressed', String(!!state.shuffle));
   const rep = state.repeat || 'off';

@@ -87,17 +87,17 @@ type field struct {
 func fields() []field {
 	return []field{{
 		Name: "musicDir", Label: "Music folder",
-		Help: "The folder Plectra scans. Point it at your music, save, then press Sync local music below.",
+		Help: "Where your music lives. Point Plectra at it, save, then press Look for music below.",
 		Live: true,
 		env:  "PLECTRA_MUSIC", alt: "music-dir",
 	}, {
-		Name: "subsonicPassword", Label: "OpenSubsonic password",
-		Help:   "Turns on the API your phone connects to, as user \"plectra\". Any value works — pick a strong one, it is reachable from the network. Leave empty and that API stays off.",
+		Name: "subsonicPassword", Label: "Listening password",
+		Help:   "Lets your phone and other apps play from this collection, signing in as \"plectra\". Any password works, so choose a strong one: anyone on your network can try it. Leave it empty and nothing outside this machine can connect.",
 		Secret: true,
 		env:    "PLECTRA_PASSWORD", alt: "subsonic-password",
 	}, {
-		Name: "lastfmApiKey", Label: "Last.fm API key",
-		Help:   "Optional. A fallback for the chart rows on the home view; ListenBrainz already covers them without any key. Create an account, then any name and a blank callback will do.",
+		Name: "lastfmApiKey", Label: "Last.fm key",
+		Help:   "Optional. A spare source for the rows about what other people are playing, which already work without it. Make a Last.fm account, then any name and a blank callback will do.",
 		Link:   "https://www.last.fm/api/account/create",
 		Secret: true,
 		env:    "LASTFM_API_KEY", alt: "last-fm-api-key",
@@ -151,11 +151,7 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 			f.Set = f.Value != ""
 		}
 	}
-	writeJSON(w, map[string]any{
-		"envPath": a.settings.envPath,
-		"fields":  out,
-		"mobile":  a.settings.mobile(),
-	})
+	writeJSON(w, map[string]any{"fields": out, "mobile": a.settings.mobile()})
 }
 
 // mobile describes how to reach this server from a phone. Typing an address
@@ -164,7 +160,7 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 func (s *settings) mobile() map[string]any {
 	if s.password == "" {
 		return map[string]any{"ready": false,
-			"note": "Set the OpenSubsonic password above and restart Plectra. The address to type into your phone appears here once it is on."}
+			"note": "Set the listening password above, then start Plectra again. The address to type into your phone appears here once it is on."}
 	}
 	host := lanAddress(s.addr)
 	if host == "" {
@@ -173,7 +169,7 @@ func (s *settings) mobile() map[string]any {
 			port = "4533"
 		}
 		return map[string]any{"ready": false,
-			"note": "Plectra is only listening on this machine, so no phone can reach it. Start it with -addr 0.0.0.0:" + port + " and they can."}
+			"note": "Plectra is keeping to this machine, so no phone can reach it yet. Start it again with the address set to 0.0.0.0:" + port + " and they can."}
 	}
 	return map[string]any{"ready": true, "url": "http://" + host, "user": s.user}
 }

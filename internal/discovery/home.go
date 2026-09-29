@@ -63,7 +63,7 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 
 	if al, err := s.st.RecentAlbums(ctx, perRow); err == nil {
 		add("Still warm",
-			"The albums you finished most recently.", local(al))
+			"The albums you played all the way through most recently.", local(al))
 	}
 
 	// Recommendations are built from tracks, then collapsed to their albums.
@@ -80,18 +80,18 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 				tracks = append(tracks, sec.Tracks...)
 			}
 			if al, err := s.st.AlbumsOfTracks(ctx, tracks, perRow); err == nil {
-				add("Out of your own history",
-					"Ranked from what you have played, narrowed to albums on your disk.", local(al))
+				add("Because of what you play",
+					"Ordered by what you have played most, kept to albums you already own.", local(al))
 			}
 		}
 	}
 
 	if al, err := s.st.MostPlayedAlbums(ctx, perRow); err == nil {
-		add("Worn thin", "The albums with the most finished plays.", local(al))
+		add("Worn thin", "The albums you have played right through the most times.", local(al))
 	}
 
 	if al, err := s.st.NewestAlbums(ctx, perRow); err == nil {
-		add("New to the shelf", "The last albums the scanner found on disk, newest first.", local(al))
+		add("New to the shelf", "The albums that arrived in your collection most recently.", local(al))
 	}
 
 	// Capped like every other row. The whole library has its own paged view;
@@ -103,7 +103,7 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 		}
 		sec := AlbumSection{
 			Title:  "The whole shelf",
-			Reason: "Every album on disk, by artist.",
+			Reason: "Everything you own, in order of artist.",
 			Albums: local(al),
 			Total:  total,
 			More:   "albums",
@@ -118,15 +118,15 @@ func (s *Service) Home(ctx context.Context) ([]AlbumSection, error) {
 			log.Printf("home: new releases: %v", err)
 		} else {
 			add("Out in the world",
-				"Released in the last two weeks and ranked by ListenBrainz listens — not in "+
-					"your library, so playing one takes a moment to find a stream.", al)
+				"New in the last two weeks and already being played everywhere. "+
+					"Nothing here is yours yet, so give one a moment to arrive.", al)
 		}
 		if al, err := s.charts.Trending(ctx, perRow); err != nil {
 			log.Printf("home: trending: %v", err)
 		} else {
 			add("Elsewhere this week",
-				"What ListenBrainz listeners played most these past seven days — none of "+
-					"it is on your disk.", al)
+				"What other people have played most over the past seven days. None of "+
+					"it is in your collection.", al)
 		}
 	}
 

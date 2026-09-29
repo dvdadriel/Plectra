@@ -151,7 +151,7 @@ func TestEverySectionSaysWhyItIsThere(t *testing.T) {
 	}
 }
 
-// "Out of your own history" must not appear before anything has been played.
+// "Because of what you play" must not appear before anything has been played.
 // Sections() also returns a never-played band, which exists for a silent
 // library too, so the row would otherwise carry a heading that is untrue.
 func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
@@ -161,7 +161,7 @@ func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if find(secs, "Out of your own history") != nil {
+	if find(secs, "Because of what you play") != nil {
 		t.Errorf("a taste row appeared with no listening at all: %v", titles(secs))
 	}
 
@@ -171,7 +171,7 @@ func TestNoTasteRowBeforeAnythingIsPlayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if find(secs, "Out of your own history") == nil {
+	if find(secs, "Because of what you play") == nil {
 		t.Errorf("no taste row after a completed play: %v", titles(secs))
 	}
 }
