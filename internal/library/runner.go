@@ -2,6 +2,9 @@ package library
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -50,6 +53,41 @@ func (s *Scanner) StartScan(ctx context.Context) bool {
 		}
 	}()
 	return true
+}
+
+// Root reports the directory being scanned.
+func (s *Scanner) Root() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root
+}
+
+// SetRoot points the scanner at another directory, so the library can be found
+// from the interface rather than only from a command line nobody sees.
+//
+// It refuses while a scan is running: the walk in flight is over the old tree,
+// and finishing it under a new name would file those tracks against the wrong
+// root. It refuses a path that is not a directory for the same reason a typo
+// should not quietly empty the library.
+//
+// ponytail: a running -watch still watches the old tree until restart. Moving
+// the watcher means tearing one down mid-event; wire it if anyone changes
+// their library directory often enough to notice.
+func (s *Scanner) SetRoot(root string) error {
+	fi, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", root)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		return errors.New("a scan is running; try again when it finishes")
+	}
+	s.root, s.status.Root = root, root
+	return nil
 }
 
 // Status reports the current or most recent scan.

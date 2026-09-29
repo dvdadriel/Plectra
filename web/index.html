@@ -635,9 +635,54 @@ function scanPanel(scan) {
 
 
 
-async function settingsPanel() {
-  const scan = await get('/library/scan');
+// The password that unlocks setup, held for this page only. It is a credential
+// on an interface that has none of its own, so it never goes to storage a later
+// visitor could read.
+let setupKey = '';
+
+// What can be configured is described by the server, so a new key is one entry
+// in Go rather than the same entry in two languages.
+async function setupPanel() {
+  const res = await fetch('/api/settings',
+    {headers: setupKey ? {'X-Plectra-Password': setupKey} : {}});
+
+  if (res.status === 403) {
+    return `
+      <h2>Setup</h2>
+      <p class="sub">Locked. Enter the OpenSubsonic password to change these, or
+         open Plectra on the machine it runs on.</p>
+      <form class="setupform" id="unlock">
+        <input type="password" name="k" placeholder="OpenSubsonic password" autocomplete="current-password">
+        <button class="action" type="submit">Unlock</button>
+      </form>`;
+  }
+  if (!res.ok) return '<h2>Setup</h2><p class="sub">Setup is unavailable.</p>';
+
+  const cfg = await res.json();
   return `
+    <h2>Setup</h2>
+    <p class="sub">Saved to <code>${esc(cfg.envPath)}</code>. Everything here is optional
+       except the music folder.</p>
+    <form class="setupform" id="setup">
+      ${cfg.fields.map(f => `
+        <label class="setuprow">
+          <span class="setuplabel">${esc(f.label)}
+            <em>${f.set ? 'set' : 'not set'}</em>
+            ${f.live ? '' : '<em>restart to apply</em>'}</span>
+          <input name="${esc(f.name)}" type="${f.secret ? 'password' : 'text'}" autocomplete="off"
+                 value="${esc(f.value || '')}"
+                 placeholder="${f.set && f.secret ? 'Leave blank to keep' : 'Not set'}">
+          <span class="sub">${esc(f.help)}${f.link
+            ? ` <a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">Get one</a>.` : ''}</span>
+        </label>`).join('')}
+      <button class="action primary" type="submit">Save</button>
+    </form>`;
+}
+
+async function settingsPanel() {
+  const [scan, setup] = await Promise.all([get('/library/scan'), setupPanel()]);
+  return `
+    ${setup}
     <h2>Local music</h2>
     ${scanPanel(scan)}
 `;
@@ -651,6 +696,24 @@ $('#main').addEventListener('click', onMainClick);
 $('#main').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
+  if (f.id === 'unlock') {
+    setupKey = f.k.value;
+    return render();
+  }
+  if (f.id === 'keys') {
+    // Only what was actually typed is sent: an untouched field must leave the
+    // stored value alone, which is not the same as clearing it.
+    const body = {};
+    for (const k of KEYS) if (f[k.name].value) body[k.name] = f[k.name].value;
+    if (!Object.keys(body).length) return flash('Nothing to save');
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: setupKey ? {'X-Plectra-Password': setupKey} : {},
+      body: JSON.stringify(body),
+    });
+    flash(res.ok ? 'Saved. Restart Plectra to apply.' : 'Could not save');
+    return render();
+  }
   const name = f.querySelector('input').value.trim();
   if (!name) return;
   if (f.id === 'newpl') {
@@ -1280,9 +1343,18 @@ function paint() {
     showFraction(t?.durationMs ? Math.min(1, state.positionMs / t.durationMs) : 0);
   }
 
-  const playing = !!state.playing;
-  $('#toggle').innerHTML = playing ? ICON.pause : ICON.play;
-  $('#toggle').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  // A track with no file has to be looked up before it can start, and that
+  // takes seconds. The button that was pressed becomes the thing that waits,
+  // so the wait is where the attention already is.
+  const playing = !!state.playing, loading = !!state.loading;
+  const toggle = $('#toggle');
+  toggle.classList.toggle('loading', loading);
+  toggle.disabled = loading;
+  toggle.setAttribute('aria-busy', String(loading));
+  toggle.innerHTML = loading ? '<i class="spinner" aria-hidden="true"></i>'
+    : playing ? ICON.pause : ICON.play;
+  toggle.setAttribute('aria-label',
+    loading ? 'Finding the stream' : playing ? 'Pause' : 'Play');
 
   $('#shuffle').setAttribute('aria-pressed', String(!!state.shuffle));
   const rep = state.repeat || 'off';

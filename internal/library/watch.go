@@ -23,7 +23,7 @@ func (s *Scanner) Watch(ctx context.Context, onChange func()) error {
 
 	// fsnotify does not recurse; every existing directory is added explicitly,
 	// and new ones are added as they appear.
-	addTree(w, s.root)
+	addTree(w, s.Root())
 
 	const debounce = 500 * time.Millisecond
 	var timer *time.Timer

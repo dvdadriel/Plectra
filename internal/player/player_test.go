@@ -688,3 +688,81 @@ func TestPlayDuringALookupIsNotSwallowed(t *testing.T) {
 		t.Fatalf("playing %q after the stale lookup landed; want Quick", got)
 	}
 }
+
+// stepSink accepts every write but reports only the frames a test releases, so
+// a position can be observed without the track running away underneath it.
+type stepSink struct{ played atomic.Int64 }
+
+func (s *stepSink) Write(pcm []float32) (int, error) { return len(pcm), nil }
+func (s *stepSink) Format() audio.Format             { return audio.Format{SampleRate: 48000, Channels: 2} }
+func (s *stepSink) Played() int64                    { return s.played.Load() }
+func (s *stepSink) Discard()                         {}
+func (s *stepSink) Close() error                     { return nil }
+
+// A lookup takes seconds, and for all of them the transport shows the track
+// being looked up. It must show that track from its start: the position used to
+// stay where the previous one stopped until audio finally arrived.
+func TestALookupStartsTheNewTrackAtZero(t *testing.T) {
+	real := makeQueue(t, 2, 400)
+	q := []store.Track{
+		{ID: 1, Path: real[0].Path, Title: "One", DurationMS: 400},
+		{Title: "Two", Artist: "A"}, // no file: must be looked up
+	}
+	sink := &stepSink{}
+	release := make(chan string)
+	p := New(sink)
+	p.Resolve = func(context.Context, store.Track) (string, error) { return <-release, nil }
+
+	p.Play(q, 0)
+	waitFor(t, "the first track", func() bool { return p.State().Index == 0 })
+
+	sink.played.Store(48000) // one second in
+	waitFor(t, "the position to move", func() bool { return p.State().PositionMS >= 1000 })
+
+	p.Next()
+	waitFor(t, "the lookup to be announced", func() bool { return p.State().Loading })
+	if got := p.State().PositionMS; got != 0 {
+		t.Fatalf("position during the lookup is %dms, want 0", got)
+	}
+
+	release <- real[1].Path
+	waitFor(t, "the looked-up track to play", func() bool {
+		st := p.State()
+		return st.Index == 1 && st.Playing && !st.Loading
+	})
+}
+
+// The gap between two external tracks is the lookup. Spending it under the
+// track still playing is the difference between a join and a silence: by the
+// time the current track ends the next one already has a location, so gapless()
+// joins them instead of stopping to think.
+func TestTheNextEntryIsLookedUpAsSoonAsTheCurrentOneStarts(t *testing.T) {
+	real := makeQueue(t, 2, 400)
+	q := []store.Track{
+		{ID: 1, Path: real[0].Path, Title: "One", DurationMS: 400},
+		{Title: "Two", Artist: "A"},
+	}
+	// Accepts nothing and plays nothing, so the first track never reaches its
+	// end: a lookup that arrives can only have been asked for at its start.
+	asked := make(chan store.Track, 4)
+	p := New(&frozenSink{})
+	p.Resolve = func(_ context.Context, tr store.Track) (string, error) {
+		asked <- tr
+		return real[1].Path, nil
+	}
+	p.Play(q, 0)
+
+	select {
+	case tr := <-asked:
+		if tr.Title != "Two" {
+			t.Fatalf("looked up %q, want Two", tr.Title)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the next entry was never looked up ahead of time")
+	}
+
+	waitFor(t, "the next entry to gain a location", func() bool {
+		st := p.State()
+		return st.Index == 0 && st.Playing && st.Queue[1].Path != ""
+	})
+}

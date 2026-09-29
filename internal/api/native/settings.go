@@ -1,0 +1,235 @@
+package native
+
+import (
+	"crypto/subtle"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Settings exists so everything Plectra needs can be entered once, in the
+// interface, instead of by hand in a file a new listener has never opened. It
+// writes the same .env the binary reads at startup — there is no second source
+// of truth, and a value typed here looks exactly like a value typed there.
+//
+// Secrets are never read back out. The panel is told whether a key is set,
+// which is all it needs to draw itself, and a key that leaves this process
+// does not come back to a browser.
+type settings struct {
+	envPath string
+	// password is the OpenSubsonic password as it stood at startup. It is what
+	// guards these routes: the rest of the native API is open, so the one page
+	// that writes credentials cannot be.
+	password string
+	scanner  RootSetter // nil when no scanner is wired
+}
+
+// RootSetter is the slice of the scanner settings may use: where the library
+// is, and pointing it somewhere else.
+type RootSetter interface {
+	Root() string
+	SetRoot(string) error
+}
+
+// WithSettings turns on the setup routes, writing to envPath.
+func (a *API) WithSettings(envPath, password string, scanner RootSetter) *API {
+	a.settings = &settings{envPath: envPath, password: password, scanner: scanner}
+	return a
+}
+
+func (a *API) settingsRoutes(mux *http.ServeMux) {
+	if a.settings == nil {
+		return
+	}
+	mux.HandleFunc("GET /api/settings", a.getSettings)
+	mux.HandleFunc("PUT /api/settings", a.putSettings)
+}
+
+// field is one thing that can be configured: what .env calls it, what the panel
+// calls it, and where to go to get one. The guidance lives here so that adding
+// a key later is one entry rather than an edit in two languages.
+type field struct {
+	Name  string `json:"name"`  // what the JSON body calls it
+	Label string `json:"label"` // what the panel calls it
+	Help  string `json:"help"`
+	Link  string `json:"link,omitempty"`
+	// Secret fields are write-only: their value never leaves the process.
+	Secret bool `json:"secret"`
+	// Live fields take effect on save. The rest are read at startup, and the
+	// panel says so rather than letting someone wonder why nothing happened.
+	Live  bool   `json:"live"`
+	Set   bool   `json:"set"`
+	Value string `json:"value,omitempty"` // only ever filled for a non-secret
+
+	env string // canonical .env name, appended when the file has neither
+	alt string // the other spelling the loader accepts
+}
+
+// fields is every key Plectra reads. Nothing else belongs in .env: a setting
+// the code never looks at is a promise the interface cannot keep.
+func fields() []field {
+	return []field{{
+		Name: "musicDir", Label: "Music folder",
+		Help: "The folder Plectra scans. Point it at your music, save, then press Sync local music below.",
+		Live: true,
+		env:  "PLECTRA_MUSIC", alt: "music-dir",
+	}, {
+		Name: "subsonicPassword", Label: "OpenSubsonic password",
+		Help:   "Turns on the API your phone connects to, as user \"plectra\". Any value works — pick a strong one, it is reachable from the network. Leave empty and that API stays off.",
+		Secret: true,
+		env:    "PLECTRA_PASSWORD", alt: "subsonic-password",
+	}, {
+		Name: "lastfmApiKey", Label: "Last.fm API key",
+		Help:   "Optional. A fallback for the chart rows on the home view; ListenBrainz already covers them without any key. Create an account, then any name and a blank callback will do.",
+		Link:   "https://www.last.fm/api/account/create",
+		Secret: true,
+		env:    "LASTFM_API_KEY", alt: "last-fm-api-key",
+	}}
+}
+
+// authorised guards the setup routes. With a password configured it is the
+// password, from anywhere. Without one there is nothing yet to check against,
+// so a first run is allowed from the machine itself and nowhere else.
+//
+// A reverse proxy or a tunnel also connects over the loopback, so that
+// exception is genuinely local only while nothing forwards to this port —
+// which is the state a first run is in.
+func (s *settings) authorised(r *http.Request) bool {
+	if s.password == "" {
+		return isLoopback(r)
+	}
+	return subtle.ConstantTimeCompare(
+		[]byte(r.Header.Get("X-Plectra-Password")), []byte(s.password)) == 1
+}
+
+func isLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
+	// Which keys are set is not itself a secret, but it is still only for
+	// whoever may change them: it says what a stolen request would be worth.
+	if !a.settings.authorised(r) {
+		http.Error(w, "not allowed", http.StatusForbidden)
+		return
+	}
+	out := fields()
+	for i := range out {
+		f := &out[i]
+		f.Set = os.Getenv(f.env) != "" || os.Getenv(f.alt) != ""
+		if f.Name == "musicDir" && a.settings.scanner != nil {
+			// The live value, not the stored one: a folder given on the command
+			// line never reaches .env, and showing the file would be a lie.
+			f.Value = a.settings.scanner.Root()
+			f.Set = f.Value != ""
+		}
+	}
+	writeJSON(w, map[string]any{"envPath": a.settings.envPath, "fields": out})
+}
+
+func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.settings.authorised(r) {
+		http.Error(w, "not allowed", http.StatusForbidden)
+		return
+	}
+	// A settings body is a handful of short strings. Anything larger is not one.
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var req map[string]string
+	if err := decode(r, &req); err != nil {
+		http.Error(w, "bad request", 400)
+		return
+	}
+
+	changes := map[string]string{}
+	for _, f := range fields() {
+		v, ok := req[f.Name]
+		if !ok {
+			continue // absent means "leave it alone", which is not "clear it"
+		}
+		v = strings.TrimSpace(v)
+		if strings.ContainsAny(v, "\n\r") {
+			http.Error(w, "a value cannot span lines", 400)
+			return
+		}
+		// A folder that does not exist is refused before anything is written:
+		// saving it would leave the library pointing at nothing.
+		if f.Name == "musicDir" && v != "" && a.settings.scanner != nil {
+			if err := a.settings.scanner.SetRoot(v); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+		}
+		changes[f.env] = v
+	}
+	if len(changes) == 0 {
+		writeJSON(w, map[string]any{"saved": false})
+		return
+	}
+	if err := writeEnv(a.settings.envPath, changes); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]any{"saved": true})
+}
+
+// writeEnv updates keys in place and appends the ones the file does not have,
+// leaving every other line — comments included — exactly as it found them. The
+// file holds credentials, so it is written 0600 and replaced atomically: a
+// half-written .env is a server that will not start.
+func writeEnv(path string, changes map[string]string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	// Either spelling of a key counts as that key's line.
+	canonical := map[string]string{}
+	for _, f := range fields() {
+		canonical[f.env], canonical[f.alt] = f.env, f.env
+	}
+
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(existing), "\n") {
+		key, _, isPair := strings.Cut(line, "=")
+		name := canonical[strings.TrimSpace(key)]
+		if !isPair || strings.HasPrefix(strings.TrimSpace(line), "#") || name == "" {
+			out = append(out, line)
+			continue
+		}
+		v, ok := changes[name]
+		if !ok {
+			out = append(out, line)
+			continue
+		}
+		if seen[name] {
+			continue // a duplicate of a key already written: drop it
+		}
+		seen[name] = true
+		out = append(out, strings.TrimSpace(key)+"="+v)
+	}
+	for _, f := range fields() {
+		if v, ok := changes[f.env]; ok && !seen[f.env] {
+			out = append(out, f.env+"="+v)
+		}
+	}
+
+	body := strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	tmp := filepath.Join(filepath.Dir(path), ".env.tmp")
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return os.Chmod(path, 0o600)
+}

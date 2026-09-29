@@ -4,37 +4,12 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/plectra/plectra/internal/store"
 )
 
 // newStore opens an empty database in a temp dir; every import test starts from
 // a library and a history that are both empty.
-func newStore(t *testing.T) *store.Store {
-	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	return st
-}
-
-// addTrack is shared by the tests in this package.
-func addTrack(t *testing.T, st *store.Store, artist, title string) int64 {
-	t.Helper()
-	id, err := st.UpsertTrack(context.Background(), store.Track{
-		Title: title, Artist: artist, Album: "Album", DiscNo: 1,
-		Path: "/music/" + title + ".flac", FileHash: artist + "/" + title,
-		DurationMS: 200000,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
 func TestRematchClaimsRowsAfterTrackEntersLibrary(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -84,10 +59,4 @@ func TestRematchClaimsRowsAfterTrackEntersLibrary(t *testing.T) {
 	if stats, _ := st.HistoryStats(ctx); stats.Unmatched != 0 {
 		t.Fatalf("unmatched = %d after rematch, want 0", stats.Unmatched)
 	}
-}
-
-// Podcast episodes and empty rows carry no track name, and an export arrives as
-// a directory of numbered files, all of which must be read.
-func at(min int) time.Time {
-	return time.Date(2024, 5, 1, 12, min, 0, 0, time.UTC)
 }

@@ -42,7 +42,11 @@ func main() {
 
 	home, _ := os.UserHomeDir()
 	dataDir := defaultDataDir()
-	music := flag.String("music", filepath.Join(home, "Music"), "music library directory")
+	musicDefault := firstEnv("PLECTRA_MUSIC", "music-dir")
+	if musicDefault == "" {
+		musicDefault = filepath.Join(home, "Music")
+	}
+	music := flag.String("music", musicDefault, "music library directory")
 	dbPath := flag.String("db", filepath.Join(dataDir, "plectra.db"), "database file")
 	coverDir := flag.String("covers", filepath.Join(dataDir, "covers"), "cover art cache directory")
 	addr := flag.String("addr", "127.0.0.1:4533", "listen address")
@@ -169,7 +173,8 @@ func main() {
 	api = api.WithRadio(radio.New()).
 		WithSources(sources).
 		WithBrowser(browse.New()).
-		WithFastBrowser(browse.NewDeezer())
+		WithFastBrowser(browse.NewDeezer()).
+		WithSettings(".env", *subPass, scanner)
 
 	handler := api.Handler()
 

@@ -28,6 +28,7 @@ type API struct {
 	browser     Browser       // nil when catalogue search is off
 	fastBrowser Browser       // nil when the search-as-you-type catalogue is off
 	covers      *remoteCovers // nil when no cover directory is configured
+	settings    *settings     // nil when the setup routes are off
 	web         fs.FS
 }
 
@@ -96,6 +97,7 @@ func (a *API) Handler() http.Handler {
 	a.sourceRoutes(mux)
 	a.browseRoutes(mux)
 	a.remoteCoverRoutes(mux)
+	a.settingsRoutes(mux)
 
 	mux.Handle("/", http.FileServer(http.FS(a.web)))
 	return mux

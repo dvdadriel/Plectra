@@ -83,7 +83,7 @@ func (s *Scanner) Scan(ctx context.Context) (Result, error) {
 		}()
 	}
 
-	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.Root(), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("walk %s: %v", p, err)
 			return nil // a bad directory must not abort the scan

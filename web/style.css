@@ -277,9 +277,7 @@ body.has-queue .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(
 
 /* ---- sections ---- */
 
-.row-head { margin: 0 0 4px; }
-.row-head h2 { font-size: 20px; }
-main > h2:not(:first-child), main > .row-head:not(:first-child) { margin-top: 36px; }
+main > h2:not(:first-child) { margin-top: 36px; }
 
 .sub { color: var(--ink-2); font-size: 14px; margin: 0 0 14px; max-width: 68ch; }
 .meta {
@@ -651,6 +649,20 @@ body:not(.has-player) { padding-bottom: 0; }
 }
 .key.primary:hover { background: var(--ink-2); }
 
+/* The transport's own button as the progress indicator: a ring drawn in the
+   button's foreground colour, so nothing shifts when the icon comes back. */
+.key.primary.loading { cursor: default; }
+.key.primary.loading:hover { background: var(--ink); }
+.spinner {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--page) 28%, transparent);
+  border-top-color: var(--page);
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
 .extras { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 
 #rail {
@@ -822,7 +834,6 @@ body:not(.has-player) #rail::after { display: none; }
 
 .actions { margin-bottom: 20px; }
 
-.steps { margin: 0 0 14px; padding-left: 1.2rem; color: var(--ink-2); font-size: 15px; line-height: 1.7; }
 
 /* display on these would otherwise outrank the [hidden] default. */
 .menu[hidden], .toast[hidden], .drop[hidden], .sleeve[hidden] { display: none !important; }
@@ -950,3 +961,22 @@ body:not(.has-player) #rail::after { display: none; }
   .card:hover .sleeve, .card:focus-visible .sleeve { transform: none; }
   .pick { transform: none; }
 }
+
+/* Setup: a short column of labelled fields, wide enough to read a key in but
+   never wider than the text explaining it. */
+.setupform { display: grid; gap: 18px; max-width: 460px; margin-top: 14px; }
+.setuprow { display: grid; gap: 6px; }
+.setuplabel { font-weight: 600; font-size: 14px; display: flex; align-items: baseline; gap: 8px; }
+.setuplabel em {
+  font-style: normal; font-size: 12px; font-weight: 500;
+  color: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--r-pill); padding: 1px 8px;
+}
+.setupform input {
+  font: inherit; font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--page); color: var(--ink);
+}
+.setupform input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.setupform .action { justify-self: start; }

@@ -28,6 +28,10 @@ type State struct {
 	Shuffle    bool          `json:"shuffle"`
 	Repeat     string        `json:"repeat"` // off | all | one
 	Queue      []store.Track `json:"queue"`
+	// Loading is set while the track under Index is being looked up. Playing is
+	// false during that wait too, so without this the transport would be
+	// indistinguishable from a paused player.
+	Loading bool `json:"loading"`
 }
 
 type command struct {
@@ -93,6 +97,7 @@ type Player struct {
 	resolveGen     atomic.Int64
 	pendingResolve int // queue entry to open once the current audio drains, or -1
 	freshAt        int // index whose expiring location was just resolved, or -1
+	resolvingFor   int // queue entry a lookup is in flight for, or -1
 }
 
 type switchPoint struct {
@@ -110,6 +115,7 @@ func New(sink Sink) *Player {
 		index:          -1,
 		pendingResolve: -1,
 		freshAt:        -1,
+		resolvingFor:   -1,
 	}
 	go p.run()
 	return p
@@ -207,6 +213,7 @@ func (p *Player) snapshot() State {
 		Shuffle:    p.shuffle,
 		Repeat:     p.repeat,
 		Queue:      p.queue,
+		Loading:    p.resolvingFor >= 0 && p.resolvingFor == p.index,
 	}
 }
 
@@ -230,9 +237,11 @@ func (p *Player) handle(c command) {
 	switch c.kind {
 	case "play":
 		p.queue = c.queue
+		p.resolvingFor = -1
 		p.openAt(c.index, 0)
 	case "restore":
 		p.queue = c.queue
+		p.resolvingFor = -1
 		p.volume, p.shuffle, p.repeat = clamp(c.f), c.b, c.s
 		if p.repeat == "" {
 			p.repeat = "off"
@@ -243,8 +252,10 @@ func (p *Player) handle(c command) {
 		p.queue = append(p.queue, c.queue...)
 	case "clear":
 		p.queue = nil
+		p.resolvingFor = -1
 		p.openAt(-1, 0)
 	case "remove":
+		p.resolvingFor = -1
 		p.removeAt(c.index)
 	case "pause":
 		// Silence has to be immediate, so the buffered tail goes too. Where it
@@ -275,7 +286,10 @@ func (p *Player) handle(c command) {
 		// The listener may have moved on while the lookup ran; only the entry
 		// that was asked for is filled in, and it only starts if it is still
 		// the one selected. A newer lookup has already been discarded above.
-		if c.index >= 0 && c.index < len(p.queue) {
+		if p.resolvingFor == c.index {
+			p.resolvingFor = -1
+		}
+		if c.s != "" && c.index >= 0 && c.index < len(p.queue) {
 			p.queue[c.index].Path = c.s
 			p.freshAt = c.index // this one location is trusted, once
 			if p.index == c.index {
@@ -333,6 +347,12 @@ func (p *Player) openAt(index int, offsetMS int64) {
 	p.pending = nil
 	p.drainTo = 0
 	p.playing = false
+	// The position counter starts over here rather than once audio arrives:
+	// a lookup takes seconds, and the rail should be at the head of the new
+	// track for all of them instead of stuck where the last one stopped.
+	p.trackOff = 0
+	p.trackStart = p.sink.Played()
+	p.pushed = p.trackStart
 	if index < 0 || index >= len(p.queue) {
 		p.index = -1
 		return
@@ -382,9 +402,26 @@ func (p *Player) openAt(index int, offsetMS int64) {
 	p.dec = d
 	p.index = index
 	p.playing = true
+	p.resolvingFor = -1
 	p.trackOff = offsetMS
 	p.trackStart = p.sink.Played()
 	p.pushed = p.trackStart
+	p.prefetchNext()
+}
+
+// prefetchNext looks the following entry up while there is still music playing
+// over it. A lookup takes seconds: spent here they are silent, spent at the
+// join they are the gap. By the time gapless() runs the entry has a real
+// location, so the switch is an ordinary join rather than a stop and a start.
+func (p *Player) prefetchNext() {
+	next := p.index + 1
+	if p.Resolve == nil || p.repeat == "one" || p.index < 0 || next >= len(p.queue) {
+		return
+	}
+	if p.queue[next].Path != "" || p.resolvingFor == next {
+		return
+	}
+	p.resolve(next)
 }
 
 // startResolve looks a track up off the engine goroutine and re-opens it when
@@ -393,10 +430,21 @@ func (p *Player) openAt(index int, offsetMS int64) {
 func (p *Player) startResolve(index int) {
 	p.index = index
 	p.playing = false
+	if p.resolvingFor == index {
+		return // a lookup started ahead of this track is already on its way
+	}
+	p.resolve(index)
+}
+
+// resolve looks a location up off the engine goroutine. It moves nothing on
+// its own, so gapless() can also call it for a track further down the queue —
+// which is what keeps the gap between two external tracks short.
+func (p *Player) resolve(index int) {
 	if p.Resolve == nil {
 		p.emit(Event{Type: "error", Message: "no source can play this track"})
 		return
 	}
+	p.resolvingFor = index
 	gen := p.resolveGen.Add(1)
 	t := p.queue[index]
 	p.emit(Event{Type: "resolving", Message: t.Title})
@@ -407,6 +455,7 @@ func (p *Player) startResolve(index int) {
 		}
 		if err != nil || loc == "" {
 			p.emit(Event{Type: "error", Message: "no stream found for " + t.Title})
+			p.send(command{kind: "resolved", index: index}) // no location: end the wait
 			return
 		}
 		p.send(command{kind: "resolved", index: index, s: loc})
@@ -503,9 +552,14 @@ func (p *Player) gapless() {
 		if p.queue[next].Path == "" {
 			// Nothing to hand the decoder yet. Let the buffered audio finish,
 			// then pick the track up once it has been looked up — a lookup
-			// takes seconds, so there is no gapless join to preserve.
+			// takes seconds, so there is no gapless join to preserve. Asking
+			// now rather than after the music stops is what spends those
+			// seconds under the track that is still playing.
 			p.pendingResolve = next
 			p.drainTo = p.pushed
+			if p.resolvingFor != next {
+				p.resolve(next)
+			}
 			return
 		}
 		d, err := audio.Open(p.queue[next].Path)
@@ -541,6 +595,7 @@ func (p *Player) advanceSwitches() {
 		p.trackStart = p.switches[0].atFrame
 		p.trackOff = 0
 		p.switches = p.switches[1:]
+		p.prefetchNext()
 		p.emitState()
 		p.maybeRefill()
 	}
