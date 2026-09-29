@@ -25,6 +25,17 @@ type settings struct {
 	// that writes credentials cannot be.
 	password string
 	scanner  RootSetter // nil when no scanner is wired
+	addr     string     // the address the server was told to listen on
+	user     string     // the OpenSubsonic username
+}
+
+// Setup is what the settings routes need to know about the running server.
+type Setup struct {
+	EnvPath  string
+	Password string
+	Addr     string
+	User     string
+	Scanner  RootSetter
 }
 
 // RootSetter is the slice of the scanner settings may use: where the library
@@ -34,9 +45,12 @@ type RootSetter interface {
 	SetRoot(string) error
 }
 
-// WithSettings turns on the setup routes, writing to envPath.
-func (a *API) WithSettings(envPath, password string, scanner RootSetter) *API {
-	a.settings = &settings{envPath: envPath, password: password, scanner: scanner}
+// WithSettings turns on the setup routes, writing to s.EnvPath.
+func (a *API) WithSettings(s Setup) *API {
+	a.settings = &settings{
+		envPath: s.EnvPath, password: s.Password,
+		scanner: s.Scanner, addr: s.Addr, user: s.User,
+	}
 	return a
 }
 
@@ -121,10 +135,15 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not allowed", http.StatusForbidden)
 		return
 	}
+	// What is stored, not what this process was started with: a key saved a
+	// moment ago is set, even though it does not take effect until a restart.
+	// The panel says which of those two it is with its own badge.
+	stored := storedEnv(a.settings.envPath)
 	out := fields()
 	for i := range out {
 		f := &out[i]
-		f.Set = os.Getenv(f.env) != "" || os.Getenv(f.alt) != ""
+		f.Set = stored[f.env] != "" || stored[f.alt] != "" ||
+			os.Getenv(f.env) != "" || os.Getenv(f.alt) != ""
 		if f.Name == "musicDir" && a.settings.scanner != nil {
 			// The live value, not the stored one: a folder given on the command
 			// line never reaches .env, and showing the file would be a lie.
@@ -132,7 +151,62 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 			f.Set = f.Value != ""
 		}
 	}
-	writeJSON(w, map[string]any{"envPath": a.settings.envPath, "fields": out})
+	writeJSON(w, map[string]any{
+		"envPath": a.settings.envPath,
+		"fields":  out,
+		"mobile":  a.settings.mobile(),
+	})
+}
+
+// mobile describes how to reach this server from a phone. Typing an address
+// from memory is where a setup usually goes wrong, so the panel shows the one
+// that actually works rather than leaving it to be guessed.
+func (s *settings) mobile() map[string]any {
+	if s.password == "" {
+		return map[string]any{"ready": false,
+			"note": "Set the OpenSubsonic password above and restart Plectra. The address to type into your phone appears here once it is on."}
+	}
+	host := lanAddress(s.addr)
+	if host == "" {
+		_, port, _ := net.SplitHostPort(s.addr)
+		if port == "" {
+			port = "4533"
+		}
+		return map[string]any{"ready": false,
+			"note": "Plectra is only listening on this machine, so no phone can reach it. Start it with -addr 0.0.0.0:" + port + " and they can."}
+	}
+	return map[string]any{"ready": true, "url": "http://" + host, "user": s.user}
+}
+
+// lanAddress turns the address the server listens on into one another device
+// can type in. A server bound to every interface answers on the machine's own
+// LAN address, and that is the one a phone needs: 0.0.0.0 is not a destination,
+// and 127.0.0.1 is a different machine from over there.
+func lanAddress(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	if ip := net.ParseIP(host); ip != nil && !ip.IsUnspecified() {
+		if ip.IsLoopback() {
+			return "" // reachable from here and nowhere else
+		}
+		return net.JoinHostPort(host, port)
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok || n.IP.IsLoopback() {
+			continue
+		}
+		if v4 := n.IP.To4(); v4 != nil {
+			return net.JoinHostPort(v4.String(), port)
+		}
+	}
+	return ""
 }
 
 func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +252,27 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"saved": true})
+}
+
+// storedEnv reads the values .env holds, which is what the panel reports as
+// set. A missing or unreadable file is simply an empty one: this only decides
+// how a badge reads.
+func storedEnv(path string) map[string]string {
+	out := map[string]string{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			out[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return out
 }
 
 // writeEnv updates keys in place and appends the ones the file does not have,

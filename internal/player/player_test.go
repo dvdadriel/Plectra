@@ -766,3 +766,70 @@ func TestTheNextEntryIsLookedUpAsSoonAsTheCurrentOneStarts(t *testing.T) {
 		return st.Index == 0 && st.Playing && st.Queue[1].Path != ""
 	})
 }
+
+// Seeking inside a track that had to be looked up must land where the listener
+// pressed. The lookup happens again — an expiring link is spent on use — but
+// the position it was asked for has to survive it.
+func TestSeekingAnExternalTrackKeepsThePosition(t *testing.T) {
+	real := makeQueue(t, 1, 4000)
+	q := []store.Track{{Title: "Two", Artist: "A", Ephemeral: true, DurationMS: 4000}}
+
+	sink := &stepSink{}
+	p := New(sink)
+	p.Resolve = func(context.Context, store.Track) (string, error) { return real[0].Path, nil }
+	p.Play(q, 0)
+	waitFor(t, "the track to play", func() bool {
+		st := p.State()
+		return st.Index == 0 && st.Playing
+	})
+
+	p.SeekMS(2000)
+	waitFor(t, "the seek to settle", func() bool {
+		st := p.State()
+		return st.Playing && !st.Loading
+	})
+	if got := p.State().PositionMS; got < 1900 || got > 2200 {
+		t.Fatalf("after seeking to 2000ms the position is %dms", got)
+	}
+}
+
+// Opening a track blocks the engine, so the wait has to be announced before it
+// starts rather than after: otherwise the transport shows the old state for the
+// whole of it and looks frozen. A local file opens fast, so only the announcing
+// itself can put Loading on the wire here.
+func TestSeekingAnnouncesTheWaitBeforeItBegins(t *testing.T) {
+	q := makeQueue(t, 1, 4000)
+	p := New(&stepSink{})
+	events, stop := p.Subscribe()
+	defer stop()
+
+	var mu sync.Mutex
+	var loadingSeen bool
+	go func() {
+		for ev := range events {
+			if ev.State != nil && ev.State.Loading {
+				mu.Lock()
+				loadingSeen = true
+				mu.Unlock()
+			}
+		}
+	}()
+
+	p.Play(q, 0)
+	waitFor(t, "the track to play", func() bool { return p.State().Playing })
+
+	mu.Lock()
+	loadingSeen = false // only what the seek says counts
+	mu.Unlock()
+
+	p.SeekMS(2000)
+	waitFor(t, "the seek to be announced as work", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return loadingSeen
+	})
+	waitFor(t, "the seek to settle", func() bool {
+		st := p.State()
+		return st.Playing && !st.Loading
+	})
+}

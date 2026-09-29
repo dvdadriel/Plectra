@@ -669,14 +669,26 @@ async function setupPanel() {
           <span class="setuplabel">${esc(f.label)}
             <em>${f.set ? 'set' : 'not set'}</em>
             ${f.live ? '' : '<em>restart to apply</em>'}</span>
-          <input name="${esc(f.name)}" type="${f.secret ? 'password' : 'text'}" autocomplete="off"
+          <input name="${esc(f.name)}" type="${f.secret ? 'password' : 'text'}"
                  value="${esc(f.value || '')}"
+                 oninput="this.dataset.typed = '1'"
+                 autocomplete="${f.secret ? 'new-password' : 'off'}"
                  placeholder="${f.set && f.secret ? 'Leave blank to keep' : 'Not set'}">
           <span class="sub">${esc(f.help)}${f.link
             ? ` <a href="${esc(f.link)}" target="_blank" rel="noopener noreferrer">Get one</a>.` : ''}</span>
         </label>`).join('')}
       <button class="action primary" type="submit">Save</button>
-    </form>`;
+    </form>
+    <h2>On your phone</h2>
+    ${cfg.mobile.ready
+      ? `<p class="sub">Install any Subsonic client, then give it these. Both devices have to be
+           on the same network.</p>
+         <dl class="conn">
+           <dt>Server</dt><dd><code>${esc(cfg.mobile.url)}</code></dd>
+           <dt>Username</dt><dd><code>${esc(cfg.mobile.user)}</code></dd>
+           <dt>Password</dt><dd>the OpenSubsonic password above</dd>
+         </dl>`
+      : `<p class="sub">${esc(cfg.mobile.note)}</p>`}`;
 }
 
 async function settingsPanel() {
@@ -701,11 +713,13 @@ $('#main').addEventListener('submit', async e => {
     return render();
   }
   if (f.id === 'setup') {
-    // An untouched secret must keep the value already stored, which is not the
-    // same as clearing it, so a blank password field is left out entirely.
+    // A secret is sent only when it was actually typed into. Leaving it out is
+    // what keeps the stored value, and testing for "typed" rather than "not
+    // empty" is what stops a browser quietly filling a saved password into this
+    // form and overwriting what the server holds with it.
     const body = {};
     for (const el of f.querySelectorAll('input[name]')) {
-      if (el.type === 'password' && !el.value) continue;
+      if (el.type === 'password' && el.dataset.typed !== '1') continue;
       body[el.name] = el.value;
     }
     if (!Object.keys(body).length) return flash('Nothing to save');
@@ -1356,8 +1370,10 @@ function paint() {
   toggle.setAttribute('aria-busy', String(loading));
   toggle.innerHTML = loading ? '<i class="spinner" aria-hidden="true"></i>'
     : playing ? ICON.pause : ICON.play;
+  // One word for both waits the flag covers — finding a stream, and opening
+  // one — because the transport is not told which of them it is in.
   toggle.setAttribute('aria-label',
-    loading ? 'Finding the stream' : playing ? 'Pause' : 'Play');
+    loading ? 'Loading' : playing ? 'Pause' : 'Play');
 
   $('#shuffle').setAttribute('aria-pressed', String(!!state.shuffle));
   const rep = state.repeat || 'off';
@@ -1388,8 +1404,15 @@ function paintSide() {
   if (t) {
     const hue = hueOf(t.albumId || t.id);
     const initial = esc((t.album || t.title || '?').trim()[0] || '?');
+    // The same artwork the shelf and the transport show. This panel used to
+    // draw the letter sleeve unconditionally, so an album with a cover lost it
+    // exactly where it is largest.
+    const cover = t.albumId && t.hasCover ? `/api/cover/${t.albumId}` : '';
     np.innerHTML = `
-      <span class="sleeve empty hue-${hue}" aria-hidden="true">${initial}</span>
+      ${cover
+        ? `<span class="sleeve hue-${hue}" aria-hidden="true"><img src="${esc(cover)}" alt=""
+             data-initial="${initial}" onerror="emptySleeve(this)"></span>`
+        : `<span class="sleeve empty hue-${hue}" aria-hidden="true">${initial}</span>`}
       <div class="np-title">${esc(t.title)}</div>
       <div class="np-artist">${esc(t.artist)}</div>
       ${t.album ? `<div class="np-album">${esc(t.album)}</div>` : ''}`;

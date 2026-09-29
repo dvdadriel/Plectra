@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,14 +31,13 @@ func HasFFmpeg() bool {
 // openFFmpeg decodes anything ffmpeg can read into the one format the player
 // already understands: signed 16-bit stereo PCM at 48kHz. ffmpeg does the
 // network fetch, the demuxing and the decoding; Plectra just reads samples.
-func openFFmpeg(location string) (Decoder, error) {
+func openFFmpeg(location string, offsetMS int64) (Decoder, error) {
 	url := strings.TrimPrefix(location, FFmpegScheme)
 	if !HasFFmpeg() {
 		return nil, fmt.Errorf("this source needs ffmpeg, which is not installed")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	args := []string{
 		// warning, not error: at error level ffmpeg swallows the HTTP status,
 		// so a refused stream reported only "Error opening input file" and the
 		// URL, which says nothing about why.
@@ -49,6 +49,14 @@ func openFFmpeg(location string) (Decoder, error) {
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "5",
 		"-rw_timeout", "15000000", // 15s: a hung socket must not hang playback
+	}
+	// Input seeking: -ss before -i asks the host for the offset rather than
+	// downloading and decoding everything up to it. Seeking a stream by reading
+	// through it costs as long as the skip itself.
+	if offsetMS > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(float64(offsetMS)/1000, 'f', 3, 64))
+	}
+	args = append(args,
 		"-i", url,
 		"-vn",
 		"-f", "s16le",
@@ -56,6 +64,9 @@ func openFFmpeg(location string) (Decoder, error) {
 		"-ac", "2",
 		"pipe:1",
 	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()

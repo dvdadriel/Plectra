@@ -174,7 +174,10 @@ func main() {
 		WithSources(sources).
 		WithBrowser(browse.New()).
 		WithFastBrowser(browse.NewDeezer()).
-		WithSettings(".env", *subPass, scanner)
+		WithSettings(native.Setup{
+			EnvPath: ".env", Password: *subPass, Addr: *addr,
+			User: *subUser, Scanner: scanner,
+		})
 
 	handler := api.Handler()
 

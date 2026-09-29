@@ -95,9 +95,15 @@ type Player struct {
 	// listener has already moved off. It replaces a single in-flight flag,
 	// which used to make every play pressed during a lookup do nothing at all.
 	resolveGen     atomic.Int64
-	pendingResolve int // queue entry to open once the current audio drains, or -1
-	freshAt        int // index whose expiring location was just resolved, or -1
-	resolvingFor   int // queue entry a lookup is in flight for, or -1
+	pendingResolve int   // queue entry to open once the current audio drains, or -1
+	freshAt        int   // index whose expiring location was just resolved, or -1
+	resolvingFor   int   // queue entry a lookup is in flight for, or -1
+	resolveAt      int64 // offset to open that entry at once its location lands
+	// opening is set while the engine is busy opening a track: spawning a
+	// decoder, and skipping into it. Both can take seconds on a stream, and
+	// the loop cannot report anything while it is inside them, so the state
+	// saying so has to go out before the work starts.
+	opening bool
 }
 
 type switchPoint struct {
@@ -213,7 +219,7 @@ func (p *Player) snapshot() State {
 		Shuffle:    p.shuffle,
 		Repeat:     p.repeat,
 		Queue:      p.queue,
-		Loading:    p.resolvingFor >= 0 && p.resolvingFor == p.index,
+		Loading:    p.opening || (p.resolvingFor >= 0 && p.resolvingFor == p.index),
 	}
 }
 
@@ -293,7 +299,9 @@ func (p *Player) handle(c command) {
 			p.queue[c.index].Path = c.s
 			p.freshAt = c.index // this one location is trusted, once
 			if p.index == c.index {
-				p.openAt(c.index, 0)
+				at := p.resolveAt
+				p.resolveAt = 0
+				p.openAt(c.index, at)
 			}
 		}
 	case "seek":
@@ -360,7 +368,7 @@ func (p *Player) openAt(index int, offsetMS int64) {
 	// No file, or a link that may since have died: ask for a fresh one. The
 	// player never replays an expiring URL it was given earlier.
 	if t := p.queue[index]; t.Path == "" || (t.Ephemeral && index != p.freshAt) {
-		p.startResolve(index)
+		p.startResolve(index, offsetMS)
 		return
 	}
 	// Freshness is spent on use: leaving this track and coming back has to ask
@@ -368,14 +376,21 @@ func (p *Player) openAt(index int, offsetMS int64) {
 	if p.queue[index].Ephemeral {
 		p.freshAt = -1
 	}
-	d, err := audio.Open(p.queue[index].Path)
+	// Opening a stream and skipping into it both block this goroutine, which
+	// is the one that answers the interface. Announcing the wait first is what
+	// keeps the transport showing a spinner instead of appearing frozen.
+	p.opening = true
+	p.emitState()
+	defer func() { p.opening = false }()
+
+	d, done, err := audio.OpenAt(p.queue[index].Path, offsetMS)
 	if err != nil && p.queue[index].Ephemeral && index == p.freshAt {
 		// The link was resolved moments ago and still failed. One more attempt
 		// with a brand new one, then it is reported rather than retried again.
 		log.Printf("player: %s went stale, resolving again: %v", p.queue[index].Title, err)
 		p.queue[index].Path = ""
 		p.freshAt = -1
-		p.startResolve(index)
+		p.startResolve(index, offsetMS)
 		return
 	}
 	if err != nil {
@@ -386,10 +401,11 @@ func (p *Player) openAt(index int, offsetMS int64) {
 		}
 		return
 	}
-	if offsetMS > 0 {
-		// ponytail: seek by decoding and discarding. Exact for every format and
-		// costs ~a few ms per minute skipped; add per-format seeking if that shows up.
-		skip := offsetMS * int64(d.Format().SampleRate) * int64(d.Format().Channels) / 1000
+	if rest := offsetMS - done; rest > 0 {
+		// ponytail: seek by decoding and discarding whatever the opener could
+		// not skip itself. Exact for every format and costs ~a few ms per minute
+		// skipped; add per-format seeking if that ever shows up.
+		skip := rest * int64(d.Format().SampleRate) * int64(d.Format().Channels) / 1000
 		buf := make([]float32, 8192)
 		for skip > 0 {
 			n, err := d.Read(buf[:min64(int64(len(buf)), skip)])
@@ -427,13 +443,16 @@ func (p *Player) prefetchNext() {
 // startResolve looks a track up off the engine goroutine and re-opens it when
 // the location comes back. The index is parked and marked not-playing so the
 // interface can say it is finding the stream rather than appearing stuck.
-func (p *Player) startResolve(index int) {
+// startResolve parks index and looks it up. offsetMS is where playback should
+// begin once the location lands: a seek inside a track whose link has to be
+// fetched again must still arrive where it was aimed, not back at the start.
+func (p *Player) startResolve(index int, offsetMS int64) {
 	p.index = index
 	p.playing = false
-	if p.resolvingFor == index {
-		return // a lookup started ahead of this track is already on its way
+	if p.resolvingFor != index {
+		p.resolve(index) // one started ahead of this track is already on its way
 	}
-	p.resolve(index)
+	p.resolveAt = offsetMS
 }
 
 // resolve looks a location up off the engine goroutine. It moves nothing on
@@ -444,7 +463,7 @@ func (p *Player) resolve(index int) {
 		p.emit(Event{Type: "error", Message: "no source can play this track"})
 		return
 	}
-	p.resolvingFor = index
+	p.resolvingFor, p.resolveAt = index, 0
 	gen := p.resolveGen.Add(1)
 	t := p.queue[index]
 	p.emit(Event{Type: "resolving", Message: t.Title})

@@ -30,9 +30,28 @@ type Decoder interface {
 
 // Open picks a decoder for a track's location: a file on disk, or a network
 // stream when the location is a URL.
-func Open(path string) (Decoder, error) {
+func Open(path string) (Decoder, error) { return open(path) }
+
+// OpenAt opens a location already positioned offsetMS in, where that is cheap,
+// and reports how much of the offset it consumed. A local file reports 0:
+// seeking one by decoding is exact and costs little. A network stream is handed
+// to ffmpeg's own seek, because reading minutes of audio only to throw them
+// away blocks playback for as long as the skip is long.
+func OpenAt(path string, offsetMS int64) (Decoder, int64, error) {
 	if strings.HasPrefix(path, FFmpegScheme) {
-		return openFFmpeg(path)
+		d, err := openFFmpeg(path, offsetMS)
+		if err != nil {
+			return nil, 0, err
+		}
+		return d, offsetMS, nil
+	}
+	d, err := open(path)
+	return d, 0, err
+}
+
+func open(path string) (Decoder, error) {
+	if strings.HasPrefix(path, FFmpegScheme) {
+		return openFFmpeg(path, 0)
 	}
 	if IsStream(path) {
 		return openStream(path)

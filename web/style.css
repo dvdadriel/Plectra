@@ -980,3 +980,10 @@ body:not(.has-player) #rail::after { display: none; }
 }
 .setupform input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .setupform .action { justify-self: start; }
+
+/* Connection details: a short label/value pair list, values set in the mono
+   face because they are typed by hand into another device. */
+.conn { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 14px 0 0; max-width: 460px; }
+.conn dt { font-weight: 600; font-size: 14px; }
+.conn dd { margin: 0; font-size: 14px; color: var(--ink-2); }
+.conn code { font-size: 13px; background: var(--raised); border-radius: var(--r-sm); padding: 2px 7px; }
